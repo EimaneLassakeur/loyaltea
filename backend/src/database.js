@@ -4,12 +4,17 @@ import { config } from './config.js'
 const { Pool } = pg
 
 export const pool = new Pool({
-  connectionString: config.databaseUrl,
+  connectionString: config.databaseConnectionString,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
-  ssl: { rejectUnauthorized: config.databaseSslRejectUnauthorized },
+  ssl: config.databaseSsl,
 })
+
+export async function checkDatabaseConnection() {
+  const result = await pool.query('select 1 as ok')
+  return result.rows[0]?.ok === 1
+}
 
 pool.on('error', (error) => {
   console.error(JSON.stringify({ event: 'database_pool_error', category: 'database_connection', name: error.name, message: error.message }))
