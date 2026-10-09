@@ -1,4 +1,8 @@
-const apiBaseUrl = import.meta.env.VITE_API_URL 
+const apiBaseUrl = import.meta.env.VITE_API_URL
+
+if (!apiBaseUrl) {
+  throw new Error('VITE_API_URL is not configured')
+}
 
 export async function apiFetch(path, accessToken, options = {}) {
   try {

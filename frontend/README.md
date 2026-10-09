@@ -9,13 +9,13 @@ npm install
 npm run dev
 ```
 
-Create a local `.env` file for the frontend:
+Create a local `.env` file for the frontend and set the deployed Render API URL:
 
 ```env
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=<your-render-api-url>
 ```
 
-Do not add any Supabase URL, anon key, service-role key, or database URL to the frontend. All Supabase operations go through Express.
+`VITE_API_URL` is required; the frontend has no localhost fallback. Do not add any Supabase URL, anon key, service-role key, or database URL to the frontend. All Supabase operations go through Express.
 
 ## Backend API
 
