@@ -3,15 +3,15 @@ import 'dotenv/config'
 const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'DATABASE_URL']
 
 export const config = {
-  port: Number(process.env.PORT || 3000),
-  frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
-  authRedirectUrl: process.env.AUTH_REDIRECT_URL || `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/auth/callback`,
+  port: Number(process.env.PORT ),
+  frontendOrigin: process.env.FRONTEND_ORIGIN ,
+  authRedirectUrl: process.env.AUTH_REDIRECT_URL ,
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   databaseUrl: process.env.DATABASE_URL,
   databaseSslRejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv: process.env.NODE_ENV ,
   publicSignupEnabled: process.env.PUBLIC_SIGNUP_ENABLED === 'true',
 }
 
