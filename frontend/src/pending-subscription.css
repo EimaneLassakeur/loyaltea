@@ -1,0 +1,11 @@
+.pending-subscription-page { padding: 24px; }
+.pending-subscription-card { position: relative; width: min(100%, 520px); padding: 36px; border: 1px solid var(--line); border-radius: 16px; background: var(--white); box-shadow: 0 18px 50px #3d292012; text-align: left; }
+.pending-subscription-card .preferences-controls { top: 18px; right: 18px; }
+.pending-subscription-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 22px; border-radius: 14px; color: var(--coral-deep); background: var(--coral-pale); }
+.pending-subscription-card h1 { margin: 0 0 10px; font-size: clamp(25px, 5vw, 34px); letter-spacing: -1px; }
+.pending-subscription-card > p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.pending-subscription-summary { display: grid; gap: 5px; margin: 24px 0; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--color-background-secondary); }
+.pending-subscription-summary span, .pending-subscription-summary small { color: var(--muted); font-size: 10px; }
+.pending-subscription-summary strong { font-size: 15px; }
+.pending-subscription-actions { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
+@media (max-width: 520px) { .pending-subscription-card { padding: 28px 20px; } .pending-subscription-actions { align-items: stretch; flex-direction: column; } .pending-subscription-actions .primary-button { width: 100%; } }

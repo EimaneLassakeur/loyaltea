@@ -62,7 +62,7 @@ export function AuthProvider({ children }) {
       try {
         const result = await apiFetch('/api/me', activeSession.access_token)
         if (mounted) {
-          setProfile(result.profile)
+          setProfile({ ...result.profile, pendingSubscription: result.pendingSubscription || null })
         }
       } catch (requestError) {
         if (mounted) {

@@ -52,7 +52,7 @@ export async function expireSubscriptions() {
   return result.rows
 }
 
-export async function recordCashPaymentAndRenew({ businessId, planId, amount, currency, startsAt, reference, notes, actorUserId, idempotencyKey }) {
+export async function recordCashPaymentAndRenew({ businessId, planId, amount, currency, startsAt, receivedAt, reference, notes, actorUserId, idempotencyKey }) {
   const client = await pool.connect()
   try {
     await client.query('begin')
@@ -64,11 +64,12 @@ export async function recordCashPaymentAndRenew({ businessId, planId, amount, cu
     const businessResult = await client.query('select id from public.businesses where id = $1', [businessId])
     if (!businessResult.rowCount) throw httpError(404, 'Business was not found')
     const start = startsAt ? new Date(startsAt) : new Date()
-    if (Number.isNaN(start.getTime())) throw httpError(400, 'startsAt is invalid')
+    const paymentDate = receivedAt ? new Date(receivedAt) : new Date()
+    if (Number.isNaN(start.getTime()) || Number.isNaN(paymentDate.getTime())) throw httpError(400, 'Payment or start date is invalid')
     const end = new Date(start.getTime() + plan.duration_days * 86400000)
     await client.query("update public.subscriptions set status = 'expired', updated_by = $2, updated_at = now() where business_id = $1 and status in ('pending', 'active', 'past_due', 'suspended')", [businessId, actorUserId])
     const subscriptionResult = await client.query(`insert into public.subscriptions (business_id, plan_id, starts_at, ends_at, status, created_by, updated_by) values ($1, $2, $3, $4, 'active', $5, $5) returning *`, [businessId, planId, start, end, actorUserId])
-    const paymentResult = await client.query(`insert into public.subscription_payments (subscription_id, business_id, amount, currency, method, reference, notes, recorded_by, idempotency_key) values ($1, $2, $3, $4, 'CASH', $5, $6, $7, $8) returning *`, [subscriptionResult.rows[0].id, businessId, amount, currency || plan.currency, reference || null, notes || null, actorUserId, idempotencyKey])
+    const paymentResult = await client.query(`insert into public.subscription_payments (subscription_id, business_id, amount, currency, received_at, method, reference, notes, recorded_by, idempotency_key) values ($1, $2, $3, $4, $5, 'CASH', $6, $7, $8, $9) returning *`, [subscriptionResult.rows[0].id, businessId, amount, currency || plan.currency, paymentDate, reference || null, notes || null, actorUserId, idempotencyKey])
     await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, 'subscription.renewed.cash', 'subscription', $3, $4)`, [actorUserId, businessId, subscriptionResult.rows[0].id, JSON.stringify({ payment_id: paymentResult.rows[0].id, plan_id: planId })])
     await client.query('commit')
     return { subscription: subscriptionResult.rows[0], payment: paymentResult.rows[0], replayed: false }

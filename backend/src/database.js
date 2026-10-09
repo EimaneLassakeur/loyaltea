@@ -62,6 +62,57 @@ export async function getBusinessPerformance(businessId, days = 30) {
   return result.rows.map((row) => ({ date: row.day, newMembers: row.new_members, loyaltyIssued: row.loyalty_issued }))
 }
 
+export async function getPendingBusinessSubscription(userId) {
+  const result = await pool.query(`
+    select s.id, s.business_id, s.plan_id, s.starts_at, s.ends_at, s.status,
+           b.name as business_name, p.name as plan_name, p.price, p.currency, p.duration_days
+    from public.subscriptions s
+    join public.businesses b on b.id = s.business_id
+    join public.subscription_plans p on p.id = s.plan_id
+    where b.owner_user_id = $1
+    order by s.created_at desc
+    limit 1
+  `, [userId])
+  return result.rows[0] || null
+}
+
+export async function getSubscriptionPlans() {
+  const result = await pool.query(`select id, name, description, price, currency, duration_days, features from public.subscription_plans where is_active order by price, name`)
+  return result.rows
+}
+
+export async function createBusinessProvisioning({ adminUserId, businessName, slug, ownerEmail, ownerPhone, ownerFullName, ownerPassword, planId }) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const ownerResult = await client.query('select id from public.users where ($1::text is not null and phone = $1) limit 1', [ownerPhone || null])
+    if (ownerResult.rowCount) throw httpError(409, 'An owner account with that phone already exists')
+    const planResult = await client.query('select id, name, price, currency, duration_days from public.subscription_plans where id = $1 and is_active', [planId])
+    if (!planResult.rowCount) throw httpError(404, 'Subscription plan was not found or is inactive')
+    const existingSlug = await client.query('select 1 from public.businesses where slug = $1', [slug])
+    if (existingSlug.rowCount) throw httpError(409, 'This business slug is already in use')
+    await client.query('commit')
+    return { identity: { email: ownerEmail || undefined, phone: ownerPhone || undefined, password: ownerPassword, email_confirm: true, phone_confirm: true, user_metadata: { full_name: ownerFullName, role: 'BUSINESS_OWNER' } }, plan: planResult.rows[0], adminUserId, businessName, slug }
+  } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+}
+
+export async function finishBusinessProvisioning({ ownerUserId, adminUserId, businessName, slug, planId }) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const userResult = await client.query("select id from public.users where id = $1 and role = 'BUSINESS_OWNER' for update", [ownerUserId])
+    if (!userResult.rowCount) throw httpError(400, 'Owner profile was not created correctly')
+    const existingBusiness = await client.query('select id from public.businesses where owner_user_id = $1', [ownerUserId])
+    if (existingBusiness.rowCount) throw httpError(409, 'This owner already has a business')
+    const businessResult = await client.query('insert into public.businesses (owner_user_id, name, slug) values ($1, $2, $3) returning id, name, slug, owner_user_id, created_at', [ownerUserId, businessName, slug])
+    const subscriptionResult = await client.query(`insert into public.subscriptions (business_id, plan_id, starts_at, ends_at, status, created_by, updated_by) select $1, id, now(), now() + make_interval(days => duration_days), 'pending', $2, $2 from public.subscription_plans where id = $3 and is_active returning id, business_id, plan_id, starts_at, ends_at, status`, [businessResult.rows[0].id, adminUserId, planId])
+    if (!subscriptionResult.rowCount) throw httpError(404, 'Subscription plan was not found or is inactive')
+    await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, 'business.created', 'business', $2, $3)`, [adminUserId, businessResult.rows[0].id, JSON.stringify({ owner_user_id: ownerUserId, subscription_id: subscriptionResult.rows[0].id, plan_id: planId })])
+    await client.query('commit')
+    return { business: businessResult.rows[0], subscription: subscriptionResult.rows[0] }
+  } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+}
+
 export async function getPlatformOverview() {
   const result = await pool.query(`
     select b.id, b.name, b.slug, b.created_at,

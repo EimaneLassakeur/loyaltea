@@ -2,8 +2,8 @@ import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { config } from '../config.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
-import { createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
-import { createEmployee, createWorkspace, earnLoyalty, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPlatformOverview, redeemReward } from '../database.js'
+import { createAdminAuthClient, createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
+import { createBusinessProvisioning, createEmployee, createWorkspace, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, redeemReward } from '../database.js'
 import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 
 const router = Router()
@@ -94,7 +94,8 @@ router.get('/me', async (request, response, next) => {
       .eq('id', request.user.id)
       .maybeSingle()
     if (error) return next(error)
-    return response.json({ profile: data })
+    const pendingSubscription = data?.role === 'BUSINESS_OWNER' ? await getPendingBusinessSubscription(request.user.id) : null
+    return response.json({ profile: data, pendingSubscription })
   } catch (error) {
     return next(error)
   }
@@ -136,6 +137,34 @@ router.get('/admin/overview', requireRoles('PLATFORM_ADMIN'), async (_request, r
   }
 })
 
+router.get('/admin/subscription-plans', requireRoles('PLATFORM_ADMIN'), async (_request, response, next) => {
+  try {
+    return response.json({ plans: await getSubscriptionPlans() })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.post('/admin/businesses/provision', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  let createdAuthUserId = null
+  try {
+    const { businessName, slug, ownerEmail, ownerPhone, ownerFullName, ownerPassword, planId } = request.body || {}
+    if (!businessName || !slug || !ownerFullName || !ownerPassword || (!ownerEmail && !ownerPhone) || !isUuid(planId)) return response.status(400).json({ error: 'Business name, slug, owner name, owner password, email or phone, and plan are required' })
+    if (ownerPassword.length < 8) return response.status(400).json({ error: 'Owner password must contain at least 8 characters' })
+    const provisioning = await createBusinessProvisioning({ adminUserId: request.user.id, businessName: businessName.trim(), slug: slug.trim().toLowerCase(), ownerEmail: ownerEmail?.trim().toLowerCase(), ownerPhone: ownerPhone ? normalizePhone(ownerPhone) : null, ownerFullName: ownerFullName.trim(), ownerPassword, planId })
+    if (ownerPhone && !provisioning.identity.phone) return response.status(400).json({ error: 'Owner phone must be a valid E.164 number' })
+    const { data, error } = await createAdminAuthClient().auth.admin.createUser(provisioning.identity)
+    if (error || !data.user) return response.status(400).json({ error: error?.message || 'Owner account could not be created' })
+    createdAuthUserId = data.user.id
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const result = await finishBusinessProvisioning({ ownerUserId: data.user.id, adminUserId: request.user.id, businessName: provisioning.businessName, slug: provisioning.slug, planId })
+    return response.status(201).json({ ...result, owner: { id: data.user.id, email: data.user.email, phone: data.user.phone } })
+  } catch (error) {
+    if (createdAuthUserId) await createAdminAuthClient().auth.admin.deleteUser(createdAuthUserId).catch(() => {})
+    return next(error)
+  }
+})
+
 router.get('/businesses/:businessId/subscription', requireRoles(...staffRoles), async (request, response, next) => {
   try {
     if (!request.businessIds.includes(request.params.businessId)) return response.status(403).json({ error: 'Business access denied' })
@@ -148,9 +177,9 @@ router.get('/businesses/:businessId/subscription', requireRoles(...staffRoles), 
 
 router.post('/admin/subscriptions/renew-cash', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
   try {
-    const { businessId, planId, amount, currency, startsAt, reference, notes, idempotencyKey } = request.body || {}
+    const { businessId, planId, amount, currency, startsAt, receivedAt, reference, notes, idempotencyKey } = request.body || {}
     if (!isUuid(businessId) || !isUuid(planId) || !isUuid(idempotencyKey) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) return response.status(400).json({ error: 'businessId, planId, amount, and a valid idempotencyKey are required' })
-    const result = await recordCashPaymentAndRenew({ businessId, planId, amount: Number(amount), currency, startsAt, reference, notes, actorUserId: request.user.id, idempotencyKey })
+    const result = await recordCashPaymentAndRenew({ businessId, planId, amount: Number(amount), currency, startsAt, receivedAt, reference, notes, actorUserId: request.user.id, idempotencyKey })
     return response.status(result.replayed ? 200 : 201).json(result)
   } catch (error) {
     return next(error)

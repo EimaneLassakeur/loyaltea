@@ -5,7 +5,7 @@ import { buildDatabaseSsl, getConflictingSslParameters, readCertificate, sanitiz
 test('readCertificate decodes base64 certificates and escaped newlines', () => {
   const certificate = '-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----'
   assert.equal(readCertificate('', Buffer.from(certificate).toString('base64')), certificate)
-  assert.equal(readCertificate(certificate.replaceAll('\n', '\\n')), certificate)
+  assert.equal(readCertificate(certificate.replaceAll('\n', '\\n'), ''), certificate)
 })
 
 test('detects and removes conflicting SSL parameters', () => {
