@@ -109,10 +109,10 @@ export function AuthProvider({ children }) {
     return () => window.clearTimeout(timer)
   }, [session])
 
-  const signIn = async (email, password) => {
+  const signIn = async (identifier, identifierType, password) => {
     setError('')
     try {
-      const result = await apiFetch('/api/auth/login', null, { method: 'POST', body: JSON.stringify({ email, password }) })
+      const result = await apiFetch('/api/auth/login', null, { method: 'POST', body: JSON.stringify({ identifier, identifierType, password }) })
       localStorage.setItem(SESSION_KEY, JSON.stringify(result.session))
       setSession(result.session)
       setError('')
@@ -124,10 +124,10 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const signUp = async ({ email, password, fullName, role }) => {
+  const signUp = async ({ phone, email, password, fullName, role }) => {
     setError('')
     try {
-      const result = await apiFetch('/api/auth/signup', null, { method: 'POST', body: JSON.stringify({ email, password, fullName, role }) })
+      const result = await apiFetch('/api/auth/signup', null, { method: 'POST', body: JSON.stringify({ phone, email, password, fullName, role }) })
       if (result.session) {
         localStorage.setItem(SESSION_KEY, JSON.stringify(result.session))
         setSession(result.session)

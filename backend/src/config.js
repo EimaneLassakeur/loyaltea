@@ -12,11 +12,16 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL,
   databaseSslRejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
   nodeEnv: process.env.NODE_ENV || 'development',
+  publicSignupEnabled: process.env.PUBLIC_SIGNUP_ENABLED === 'true',
 }
 
 export function assertConfig() {
   const missing = required.filter((key) => !process.env[key])
   if (missing.length > 0) {
     throw new Error(`Missing backend environment variables: ${missing.join(', ')}`)
+  }
+  if (config.nodeEnv === 'production') {
+    if (/^https?:\/\/localhost|^http:\/\//i.test(config.frontendOrigin)) throw new Error('FRONTEND_ORIGIN must use HTTPS in production')
+    if (!config.databaseSslRejectUnauthorized) throw new Error('DATABASE_SSL_REJECT_UNAUTHORIZED must be true in production')
   }
 }

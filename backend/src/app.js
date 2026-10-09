@@ -17,10 +17,11 @@ export function createApp() {
   app.use('/api', apiRouter)
 
   app.use((_request, response) => response.status(404).json({ error: 'Route not found' }))
-  app.use((error, _request, response, _next) => {
-    console.error(error)
+  app.use((error, request, response, _next) => {
     const status = error.status || error.statusCode || 500
-    response.status(status).json({ error: status >= 500 && config.nodeEnv === 'production' ? 'Internal server error' : error.message })
+    const code = error.code || (status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR')
+    console.error(JSON.stringify({ event: 'request_error', method: request.method, path: request.originalUrl, status, code, category: status >= 500 ? 'server' : 'request', name: error.name, message: error.message }))
+    response.status(status).json({ error: status >= 500 ? 'Internal server error' : error.message, code })
   })
 
   return app

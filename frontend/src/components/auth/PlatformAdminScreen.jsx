@@ -13,6 +13,9 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
   const [activeView, setActiveView] = useState('Dashboard')
   const [selectedBusiness, setSelectedBusiness] = useState(null)
   const [businessSearch, setBusinessSearch] = useState('')
+  const [subscriptionByBusiness, setSubscriptionByBusiness] = useState({})
+  const [renewalForm, setRenewalForm] = useState({ planId: '', amount: '', reference: '', notes: '' })
+  const [renewalMessage, setRenewalMessage] = useState('')
 
   const filteredBusinesses = useMemo(() => businesses.filter((business) => `${business.name} ${business.slug}`.toLowerCase().includes(businessSearch.toLowerCase())), [businesses, businessSearch])
   const formatDate = (value) => new Intl.DateTimeFormat(language, { dateStyle: 'medium' }).format(new Date(value))
@@ -24,6 +27,15 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
         const result = await apiFetch('/api/admin/overview', session.access_token)
         setBusinesses(result.businesses || [])
         setTotals(result.totals || { businesses: 0, activePrograms: 0, customers: 0 })
+        const subscriptionEntries = await Promise.all((result.businesses || []).map(async (business) => {
+          try {
+            const subscriptionResult = await apiFetch(`/api/businesses/${business.id}/subscription`, session.access_token)
+            return [business.id, subscriptionResult.subscription]
+          } catch {
+            return [business.id, null]
+          }
+        }))
+        setSubscriptionByBusiness(Object.fromEntries(subscriptionEntries))
         setError('')
       } catch (err) {
         setError(err.message)
@@ -112,7 +124,7 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
             {!filteredBusinesses.length && <div className="panel-empty"><Store size={24} /><strong>{t('noBusinessesFound')}</strong><span>{t('noBusinessesFoundCopy')}</span></div>}
           </section>}
           {error && <p className="form-error">{t('loadError')}: {error}</p>}
-          {selectedBusiness && <section className="panel info-panel" style={{ marginTop: '14px' }}><div className="panel-heading"><div><h2>{selectedBusiness.name}</h2><p>{selectedBusiness.slug}</p></div><button className="text-button" onClick={() => setSelectedBusiness(null)}>{t('closeDetails')}</button></div><div className="settings-list"><div><span>{t('created')}</span><strong>{formatDate(selectedBusiness.created_at)}</strong></div><div><span>{t('programs')}</span><strong>{selectedBusiness.active_programs}</strong></div><div><span>{t('customers')}</span><strong>{selectedBusiness.customers}</strong></div><div><span>{t('transactions')}</span><strong>{selectedBusiness.transactions}</strong></div></div></section>}
+          {selectedBusiness && <section className="panel info-panel" style={{ marginTop: '14px' }}><div className="panel-heading"><div><h2>{selectedBusiness.name}</h2><p>{selectedBusiness.slug}</p></div><button className="text-button" onClick={() => setSelectedBusiness(null)}>{t('closeDetails')}</button></div><div className="settings-list"><div><span>{t('created')}</span><strong>{formatDate(selectedBusiness.created_at)}</strong></div><div><span>{t('programs')}</span><strong>{selectedBusiness.active_programs}</strong></div><div><span>{t('customers')}</span><strong>{selectedBusiness.customers}</strong></div><div><span>{t('transactions')}</span><strong>{selectedBusiness.transactions}</strong></div><div><span>Subscription</span><strong>{subscriptionByBusiness[selectedBusiness.id]?.status || 'Not configured'}</strong></div><div><span>Expires</span><strong>{subscriptionByBusiness[selectedBusiness.id]?.ends_at ? formatDate(subscriptionByBusiness[selectedBusiness.id].ends_at) : '—'}</strong></div></div><form onSubmit={async (event) => { event.preventDefault(); setRenewalMessage(''); try { const result = await apiFetch('/api/admin/subscriptions/renew-cash', session.access_token, { method: 'POST', body: JSON.stringify({ businessId: selectedBusiness.id, planId: renewalForm.planId, amount: Number(renewalForm.amount), reference: renewalForm.reference, notes: renewalForm.notes, idempotencyKey: crypto.randomUUID() }) }); setSubscriptionByBusiness((current) => ({ ...current, [selectedBusiness.id]: result.subscription })); setRenewalMessage('Subscription renewed successfully.'); } catch (err) { setRenewalMessage(err.message) } }}><div className="form-grid"><label>Plan ID<input required value={renewalForm.planId} onChange={(event) => setRenewalForm({ ...renewalForm, planId: event.target.value })} /></label><label>Cash amount<input required min="0.01" step="0.01" type="number" value={renewalForm.amount} onChange={(event) => setRenewalForm({ ...renewalForm, amount: event.target.value })} /></label><label>Reference<input value={renewalForm.reference} onChange={(event) => setRenewalForm({ ...renewalForm, reference: event.target.value })} /></label><label>Notes<input value={renewalForm.notes} onChange={(event) => setRenewalForm({ ...renewalForm, notes: event.target.value })} /></label></div><button className="primary-button" type="submit">Record cash renewal</button>{renewalMessage && <p className="form-message">{renewalMessage}</p>}</form></section>}
 
           <footer className="page-footer" style={{ marginTop: '40px' }}>
             <span><span className="status-indicator" /> {t('apiConnected')}</span>

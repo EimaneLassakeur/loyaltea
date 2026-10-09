@@ -4,6 +4,7 @@ import { config } from '../config.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
 import { createEmployee, createWorkspace, earnLoyalty, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPlatformOverview, redeemReward } from '../database.js'
+import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 
 const router = Router()
 const staffRoles = ['BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'PLATFORM_ADMIN']
@@ -15,9 +16,12 @@ router.get('/health', (_request, response) => response.json({ ok: true }))
 
 router.post('/auth/login', authLimiter, async (request, response, next) => {
   try {
-    const { email, password } = request.body || {}
-    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || password.length < 8) return response.status(400).json({ error: 'A valid email and password of at least 8 characters are required' })
-    const { data, error } = await createAuthClient().auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
+    const { identifier, identifierType, password } = request.body || {}
+    const normalizedEmail = normalizeEmail(identifierType === 'email' ? identifier : '')
+    const normalizedPhone = normalizePhone(identifierType === 'phone' ? identifier : '')
+    if ((!normalizedEmail && !normalizedPhone) || typeof password !== 'string' || password.length < 8) return response.status(400).json({ error: 'A valid email or phone number and a password of at least 8 characters are required' })
+    const credentials = normalizedPhone ? { phone: normalizedPhone, password } : { email: normalizedEmail, password }
+    const { data, error } = await createAuthClient().auth.signInWithPassword(credentials)
     if (error) return response.status(401).json({ error: error.message })
     return response.json({ session: data.session, user: data.user })
   } catch (error) {
@@ -27,10 +31,14 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
 
 router.post('/auth/signup', authLimiter, async (request, response, next) => {
   try {
-    const { email, password, fullName, role = 'CUSTOMER' } = request.body || {}
-    if (typeof email !== 'string' || typeof password !== 'string' || typeof fullName !== 'string' || !email.trim() || !fullName.trim() || password.length < 8) return response.status(400).json({ error: 'Email, full name, and a password of at least 8 characters are required' })
-    if (!['BUSINESS_OWNER', 'CUSTOMER'].includes(role)) return response.status(400).json({ error: 'Invalid account role' })
-    const { data, error } = await createAuthClient().auth.signUp({ email: email.trim().toLowerCase(), password, options: { data: { full_name: fullName.trim(), role }, emailRedirectTo: config.authRedirectUrl } })
+    if (!config.publicSignupEnabled) return response.status(403).json({ error: 'Public signup is currently disabled' })
+    const { email, phone, password, fullName, role = 'CUSTOMER' } = request.body || {}
+    const normalizedEmail = normalizeEmail(email)
+    const normalizedPhone = normalizePhone(phone)
+    if (!normalizedPhone || typeof password !== 'string' || typeof fullName !== 'string' || !fullName.trim() || password.length < 8) return response.status(400).json({ error: 'Phone number, full name, and a password of at least 8 characters are required' })
+    if (email !== undefined && email !== null && email !== '' && !normalizedEmail) return response.status(400).json({ error: 'A valid email address is required when provided' })
+    if (role !== 'CUSTOMER') return response.status(403).json({ error: 'Public signup is limited to customer accounts' })
+    const { data, error } = await createAuthClient().auth.signUp({ phone: normalizedPhone, ...(normalizedEmail ? { email: normalizedEmail } : {}), password, options: { data: { full_name: fullName.trim(), role: 'CUSTOMER' }, emailRedirectTo: config.authRedirectUrl } })
     if (error) return response.status(400).json({ error: error.message })
     return response.status(201).json({ session: data.session, user: data.user, confirmationRequired: !data.session })
   } catch (error) {
@@ -128,6 +136,35 @@ router.get('/admin/overview', requireRoles('PLATFORM_ADMIN'), async (_request, r
   }
 })
 
+router.get('/businesses/:businessId/subscription', requireRoles(...staffRoles), async (request, response, next) => {
+  try {
+    if (!request.businessIds.includes(request.params.businessId)) return response.status(403).json({ error: 'Business access denied' })
+    const subscription = await getBusinessSubscription(request.params.businessId)
+    return response.json({ subscription, active: subscriptionAllowsAccess(subscription) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.post('/admin/subscriptions/renew-cash', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try {
+    const { businessId, planId, amount, currency, startsAt, reference, notes, idempotencyKey } = request.body || {}
+    if (!isUuid(businessId) || !isUuid(planId) || !isUuid(idempotencyKey) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) return response.status(400).json({ error: 'businessId, planId, amount, and a valid idempotencyKey are required' })
+    const result = await recordCashPaymentAndRenew({ businessId, planId, amount: Number(amount), currency, startsAt, reference, notes, actorUserId: request.user.id, idempotencyKey })
+    return response.status(result.replayed ? 200 : 201).json(result)
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.post('/admin/subscriptions/expire', requireRoles('PLATFORM_ADMIN'), async (_request, response, next) => {
+  try {
+    return response.json({ expired: await expireSubscriptions() })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 router.get('/loyalty/lookup/:secureToken', requireRoles(...staffRoles), async (request, response, next) => {
   try {
     if (!isUuid(request.params.secureToken)) return response.status(400).json({ error: 'Invalid membership token' })
@@ -165,12 +202,14 @@ router.post('/public/programs/:programId/join', requireRoles('CUSTOMER'), async 
   try {
     const { data: program, error: programError } = await request.supabase
       .from('loyalty_programs')
-      .select('id, is_active')
+      .select('id, is_active, business_id')
       .eq('id', request.params.programId)
       .eq('is_active', true)
       .maybeSingle()
     if (programError) return next(programError)
     if (!program) return response.status(404).json({ error: 'Program not found or inactive' })
+    const subscription = await getBusinessSubscription(program.business_id)
+    if (!subscriptionAllowsAccess(subscription)) return response.status(403).json({ error: 'This business is not currently accepting new memberships', code: 'BUSINESS_SUBSCRIPTION_INACTIVE' })
     const { data, error } = await request.supabase
       .from('customer_memberships')
       .upsert({ customer_id: request.user.id, program_id: request.params.programId, is_active: true }, { onConflict: 'customer_id,program_id' })
@@ -183,12 +222,13 @@ router.post('/public/programs/:programId/join', requireRoles('CUSTOMER'), async 
   }
 })
 
-router.get('/dashboard', requireRoles(...staffRoles), async (request, response, next) => {
+router.get('/dashboard', requireRoles(...staffRoles), requireActiveBusinessSubscription, async (request, response, next) => {
   try {
     const requestedBusinessId = request.query.businessId
     if (requestedBusinessId && !request.businessIds.includes(requestedBusinessId)) return response.status(403).json({ error: 'Business access denied' })
     if (!request.businessIds.length) return response.json({ business: null, program: null, customers: [], transactions: [], redemptions: [], stats: emptyStats(), performance: { period: 30, points: [] } })
-    const selectedBusinessId = requestedBusinessId || request.businessIds[0]
+    const selectedBusinessId = requestedBusinessId || request.activeBusinessIds?.[0] || request.businessIds[0]
+    if (request.profile?.role !== 'PLATFORM_ADMIN' && !request.activeBusinessIds?.includes(selectedBusinessId)) return response.status(402).json({ error: 'The selected business subscription is inactive', code: 'SUBSCRIPTION_REQUIRED' })
     const { data: businesses, error: businessError } = await request.supabase
       .from('businesses')
       .select('id, name, logo_url, business_locations(id, name, is_active), loyalty_programs(id, name, model, is_active, rewards(id, name, description, required_stamps, required_points, expires_at, is_active))')
@@ -221,7 +261,16 @@ router.get('/dashboard', requireRoles(...staffRoles), async (request, response, 
       updatedAt: membership.updated_at,
     }))
     const period = [30, 90, 365].includes(Number(request.query.period)) ? Number(request.query.period) : 30
-    const [stats, performance] = await Promise.all([getBusinessStats(business.id), getBusinessPerformance(business.id, period)])
+    let stats
+    let performance
+    try {
+      ;[stats, performance] = await Promise.all([getBusinessStats(business.id), getBusinessPerformance(business.id, period)])
+    } catch (error) {
+      error.status = error.status && error.status < 500 ? error.status : 500
+      error.code = 'DASHBOARD_METRICS_QUERY_FAILED'
+      error.message = `Dashboard metrics query failed: ${error.message}`
+      throw error
+    }
     return response.json({
       business,
       program,
@@ -236,7 +285,7 @@ router.get('/dashboard', requireRoles(...staffRoles), async (request, response, 
   }
 })
 
-router.post('/loyalty/earn', loyaltyLimiter, requireRoles(...staffRoles), async (request, response, next) => {
+router.post('/loyalty/earn', loyaltyLimiter, requireRoles(...staffRoles), requireActiveBusinessSubscription, async (request, response, next) => {
   try {
     const { membershipId, locationId, model, amount, requestId } = request.body || {}
     if (!membershipId || !locationId || !['STAMPS', 'POINTS'].includes(model) || !isUuid(requestId)) return response.status(400).json({ error: 'membershipId, locationId, model, and a valid requestId are required' })
@@ -248,7 +297,7 @@ router.post('/loyalty/earn', loyaltyLimiter, requireRoles(...staffRoles), async 
   }
 })
 
-router.post('/loyalty/redeem', loyaltyLimiter, requireRoles(...staffRoles), async (request, response, next) => {
+router.post('/loyalty/redeem', loyaltyLimiter, requireRoles(...staffRoles), requireActiveBusinessSubscription, async (request, response, next) => {
   try {
     const { membershipId, rewardId, locationId, requestId } = request.body || {}
     if (!membershipId || !rewardId || !locationId || !isUuid(requestId)) return response.status(400).json({ error: 'membershipId, rewardId, locationId, and a valid requestId are required' })
@@ -352,6 +401,18 @@ async function insertTable(request, response, next, table, allowedFields, requir
   } catch (error) {
     return next(error)
   }
+}
+
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return ''
+  const normalized = value.trim().toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : ''
+}
+
+function normalizePhone(value) {
+  if (typeof value !== 'string') return ''
+  const normalized = value.trim().replace(/[\s().-]/g, '')
+  return /^\+[1-9]\d{7,14}$/.test(normalized) ? normalized : ''
 }
 
 function emptyStats() {

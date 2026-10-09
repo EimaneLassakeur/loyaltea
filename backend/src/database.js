@@ -11,6 +11,10 @@ export const pool = new Pool({
   ssl: { rejectUnauthorized: config.databaseSslRejectUnauthorized },
 })
 
+pool.on('error', (error) => {
+  console.error(JSON.stringify({ event: 'database_pool_error', category: 'database_connection', name: error.name, message: error.message }))
+})
+
 export async function getAccessibleBusinessIds(userId) {
   const roleResult = await pool.query('select role from public.users where id = $1', [userId])
   if (roleResult.rows[0]?.role === 'PLATFORM_ADMIN') {

@@ -15,7 +15,7 @@ Create a local `.env` file for the frontend and set the deployed Render API URL:
 VITE_API_URL=<your-render-api-url>
 ```
 
-`VITE_API_URL` is required; the frontend has no localhost fallback. Do not add any Supabase URL, anon key, service-role key, or database URL to the frontend. All Supabase operations go through Express.
+`VITE_API_URL` is required; the frontend has no localhost fallback. Set `VITE_PUBLIC_SIGNUP_ENABLED=false` for the current production release. Public signup remains implemented and can be re-enabled after the backend `PUBLIC_SIGNUP_ENABLED` flag and Supabase verification providers are configured. Do not add any Supabase URL, anon key, service-role key, or database URL to the frontend. All Supabase operations go through Express.
 
 ## Backend API
 
