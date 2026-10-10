@@ -26,13 +26,13 @@ export async function requireActiveBusinessSubscription(request, response, next)
     const businessIds = request.businessIds || []
     if (!businessIds.length) return next()
     const result = await pool.query(`
-      select distinct on (b.id) b.id, s.status, s.starts_at, s.ends_at
+      select distinct on (b.id) b.id, b.status as business_status, s.status, s.starts_at, s.ends_at
       from public.businesses b
       left join public.subscriptions s on s.business_id = b.id
       where b.id = any($1::uuid[])
       order by b.id, s.created_at desc nulls last
     `, [businessIds])
-    const activeBusinessIds = result.rows.filter((row) => subscriptionAllowsAccess(row)).map((row) => row.id)
+    const activeBusinessIds = result.rows.filter((row) => row.business_status === 'active' && subscriptionAllowsAccess(row)).map((row) => row.id)
     request.subscriptionRows = result.rows
     request.activeBusinessIds = activeBusinessIds
     if (!activeBusinessIds.length) return response.status(402).json({ error: 'An active subscription is required to access this workspace', code: 'SUBSCRIPTION_REQUIRED' })

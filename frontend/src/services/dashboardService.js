@@ -48,6 +48,10 @@ export async function getPublicProgram(programId) {
   return apiFetch(`/api/public/programs/${programId}`)
 }
 
+export async function getPublicBusiness(businessSlug) {
+  return apiFetch(`/api/public/businesses/${encodeURIComponent(businessSlug)}`)
+}
+
 export async function joinProgram(accessToken, programId) {
   return apiFetch(`/api/public/programs/${programId}/join`, accessToken, { method: 'POST' })
 }

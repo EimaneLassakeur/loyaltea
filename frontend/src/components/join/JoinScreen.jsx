@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Coffee, Gift } from 'lucide-react'
-import { getPublicProgram, joinProgram } from '../../services/dashboardService'
+import { getPublicBusiness, getPublicProgram, joinProgram } from '../../services/dashboardService'
 import PreferencesControls from '../PreferencesControls'
+import { usePreferences } from '../../contexts/usePreferences'
 
 const publicSignupEnabled = import.meta.env.VITE_PUBLIC_SIGNUP_ENABLED === 'true'
 
-export default function JoinScreen({ programId, session, onSignIn, onSignUp, onClearError }) {
+export default function JoinScreen({ businessSlug, programId, session, onSignIn, onSignUp, onClearError }) {
+  const { t } = usePreferences()
   const [program, setProgram] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -16,8 +18,9 @@ export default function JoinScreen({ programId, session, onSignIn, onSignUp, onC
   const [form, setForm] = useState({ phone: '', email: '', password: '', fullName: '' })
 
   useEffect(() => {
-    getPublicProgram(programId).then((result) => setProgram(result.program)).catch((requestError) => setError(requestError.message)).finally(() => setLoading(false))
-  }, [programId])
+    const load = businessSlug ? getPublicBusiness(businessSlug) : getPublicProgram(programId)
+    load.then((result) => setProgram(result.program)).catch((requestError) => setError(requestError.message)).finally(() => setLoading(false))
+  }, [businessSlug, programId])
 
   const authenticateAndJoin = async (event) => {
     event.preventDefault()
@@ -33,7 +36,7 @@ export default function JoinScreen({ programId, session, onSignIn, onSignUp, onC
         activeSession = result.data?.session
         if (!activeSession) throw new Error('Check your email to confirm your account, then open this join link again.')
       }
-      const result = await joinProgram(activeSession.access_token, programId)
+      const result = await joinProgram(activeSession.access_token, program.id)
       setJoined(result.membership)
     } catch (requestError) {
       setError(requestError.message)
@@ -48,10 +51,10 @@ export default function JoinScreen({ programId, session, onSignIn, onSignUp, onC
   return (
     <main className="join-page"><PreferencesControls /><div className="join-card">
         <div className="brand-row auth-brand"><div className="brand-mark"><Coffee size={18} strokeWidth={2.5} /></div><span>loyaltea</span></div>
-        <p className="eyebrow">Join the community</p>
+        <p className="eyebrow">{t('joinCommunity')}</p>
         <h1>{program.businesses?.name}</h1>
         <p className="join-program-name">{program.name}</p>
-        <p className="heading-copy">{program.description || 'Collect loyalty rewards every time you visit.'}</p>
+        <p className="heading-copy">{program.description || t('collectRewards')}</p>
         <div className="join-reward-list">{(program.rewards || []).filter((reward) => reward.is_active).map((reward) => <div className="join-reward" key={reward.id}><Gift size={18} /><div><strong>{reward.name}</strong><small>Unlock at {program.model === 'STAMPS' ? reward.required_stamps : reward.required_points} {program.model.toLowerCase()}</small></div></div>)}</div>
         {joined ? <div className="form-message join-success">You joined successfully. Your membership card is ready in your account.</div> : <form onSubmit={authenticateAndJoin}>
           {!session && mode === 'sign-up' && <label>Full name<input required value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} /></label>}
@@ -60,9 +63,9 @@ export default function JoinScreen({ programId, session, onSignIn, onSignUp, onC
           {(mode === 'sign-up' || loginMethod === 'email') && <label>Email{mode === 'sign-up' && <small>optional</small>}<input required={mode === 'sign-in' && loginMethod === 'email'} type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>}
           <label>Password<input required minLength="8" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
           {error && <p className="form-error">{error}</p>}
-          <button className="primary-button auth-submit" disabled={busy}>{busy ? 'Joining...' : session ? 'Join program' : mode === 'sign-in' ? 'Sign in and join' : 'Create account and join'}</button>
+          <button className="primary-button auth-submit" disabled={busy}>{busy ? t('joining') : session ? t('joinProgram') : mode === 'sign-in' ? t('signInAndJoin') : t('createAccountAndJoin')}</button>
         </form>}
-        {!session && publicSignupEnabled && !joined && <button className="text-button auth-switch" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(''); onClearError() }}>{mode === 'sign-in' ? 'New here? Create a customer account' : 'Already have an account? Sign in'}</button>}
+        {!session && publicSignupEnabled && !joined && <button className="text-button auth-switch" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(''); onClearError() }}>{mode === 'sign-in' ? t('newCustomerAccount') : t('existingCustomerAccount')}</button>}
       </div>
     </main>
   )

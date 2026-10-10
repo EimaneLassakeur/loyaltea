@@ -113,7 +113,10 @@ export default function DashboardPage({ session, profile, onSignOut }) {
     window.setTimeout(() => setNotice(''), 2800)
   }
 
-  const joinLink = dashboard.program?.id ? `${window.location.origin}/join/${dashboard.program.id}` : ''
+  const publicAppUrl = import.meta.env.VITE_PUBLIC_APP_URL?.trim() || ''
+  const publicAppUrlIsValid = /^https:\/\/[^/]+(?:\/[^/]*)?$/i.test(publicAppUrl) && !/localhost|127\.0\.0\.1/i.test(publicAppUrl)
+  const joinLink = publicAppUrlIsValid && dashboard.business?.slug && dashboard.program?.id ? `${publicAppUrl.replace(/\/$/, '')}/join/business/${encodeURIComponent(dashboard.business.slug)}` : ''
+  const joinLinkError = !dashboard.business?.slug ? t('businessLinkUnavailable') : !dashboard.program?.id ? t('programLinkUnavailable') : !publicAppUrlIsValid ? t('publicAppUrlUnavailable') : ''
 
   const copyJoinLink = async () => {
     try {
@@ -123,6 +126,19 @@ export default function DashboardPage({ session, profile, onSignOut }) {
     } catch (error) {
       setDataError(error.message)
     }
+  }
+
+  const downloadJoinQr = () => {
+    const svg = document.querySelector('.business-join-qr svg')
+    if (!svg || !joinLink) return
+    const source = new XMLSerializer().serializeToString(svg)
+    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${dashboard.business.slug}-loyaltea-qr.svg`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   if (loading) return <div className="app-state"><strong>{t('loadingWorkspace')}</strong></div>
@@ -163,7 +179,7 @@ export default function DashboardPage({ session, profile, onSignOut }) {
             </div>
             <div className="heading-actions"><button className="primary-button" onClick={() => setJoinQrOpen(true)} disabled={!joinLink}><QrCode size={16} /> {t('showJoinQr')}</button><button className="secondary-button" onClick={copyJoinLink} disabled={!joinLink}><Sparkles size={16} /> {t('copyLink')}</button></div>
           </section>
-          <section className="panel business-join-card"><div className="panel-heading"><div><h2>{t('letCustomersJoin')}</h2><p>{t('businessQrInstructions')}</p></div><QrCode size={20} /></div><div className="business-join-content"><div className="business-join-qr"><QRCodeSVG value={joinLink || 'https://loyaltea.local'} size={156} includeMargin bgColor="#ffffff" fgColor="#203b36" /></div><div className="business-join-copy"><strong>{dashboard.business.name}</strong><span>{dashboard.program?.name}</span><code>{joinLink || t('programLinkUnavailable')}</code><button className="secondary-button" onClick={copyJoinLink} disabled={!joinLink}>{t('copyCustomerJoinLink')}</button></div></div></section>
+          <section className="panel business-join-card"><div className="panel-heading"><div><h2>{t('qrSectionTitle')}</h2><p>{t('qrSectionDescription')}</p></div><QrCode size={20} /></div><div className="business-join-content">{joinLink ? <div className="business-join-qr"><QRCodeSVG value={joinLink} size={156} includeMargin bgColor="#ffffff" fgColor="#203b36" /></div> : <div className="business-join-qr qr-unavailable"><QrCode size={42} /><span>{joinLinkError}</span></div>}<div className="business-join-copy"><strong>{dashboard.business.name}</strong><span>{dashboard.program?.name || t('programUnavailable')}</span><code>{joinLink || joinLinkError}</code><div className="qr-actions"><button className="secondary-button" onClick={copyJoinLink} disabled={!joinLink}>{t('copyCustomerJoinLink')}</button><button className="secondary-button" onClick={downloadJoinQr} disabled={!joinLink}>{t('downloadQr')}</button></div></div></div></section>
           {activePage === 'Rewards' ? <RewardsPanel program={dashboard.program} /> : <>
             {(activePage === 'Overview' || activePage === 'Customers') && <EmployeeOperationsPanel accessToken={session.access_token} program={dashboard.program} onAddLoyalty={addLoyalty} onRedeem={redeemCustomerReward} />}
             <StatsGrid values={dashboard.stats} />
@@ -177,7 +193,7 @@ export default function DashboardPage({ session, profile, onSignOut }) {
           </footer>
         </div>
       </main>
-      {joinQrOpen && <div className="qr-modal-backdrop" role="presentation" onClick={() => setJoinQrOpen(false)}><section className="qr-modal business-join-modal" role="dialog" aria-modal="true" aria-label="Business customer join QR" onClick={(event) => event.stopPropagation()}><button className="text-button qr-close" onClick={() => setJoinQrOpen(false)}>Close</button><p className="eyebrow">Customer join code</p><h2>{dashboard.business.name}</h2><QRCodeSVG value={joinLink} size={250} includeMargin bgColor="#ffffff" fgColor="#203b36" /><p className="heading-copy">Customers scan this code to open the program and join your loyalty membership.</p></section></div>}
+      {joinQrOpen && <div className="qr-modal-backdrop" role="presentation" onClick={() => setJoinQrOpen(false)}><section className="qr-modal business-join-modal" role="dialog" aria-modal="true" aria-label={t('businessQrModalLabel')} onClick={(event) => event.stopPropagation()}><button className="text-button qr-close" onClick={() => setJoinQrOpen(false)}>{t('close')}</button><p className="eyebrow">{t('customerJoinCode')}</p><h2>{dashboard.business.name}</h2>{joinLink ? <><code className="qr-destination">{joinLink}</code><QRCodeSVG value={joinLink} size={250} includeMargin bgColor="#ffffff" fgColor="#203b36" /><p className="heading-copy">{t('qrNativeCameraInstructions')}</p><div className="qr-actions"><button className="secondary-button" onClick={copyJoinLink}>{t('copyCustomerJoinLink')}</button><button className="secondary-button" onClick={downloadJoinQr}>{t('downloadQr')}</button></div></> : <p className="form-error">{joinLinkError}</p>}</section></div>}
       {notice && <div className="toast"><span className="toast-check">✓</span>{notice}</div>}
     </div>
   )

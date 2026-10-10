@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Camera, Coffee, Gift, LogOut, QrCode, Sparkles, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiFetch } from '../lib/api'
-import { getPublicProgram, joinProgram } from '../services/dashboardService'
 import PreferencesControls from '../components/PreferencesControls'
 import { usePreferences } from '../contexts/usePreferences'
 
@@ -13,12 +12,11 @@ export default function CustomerPage({ session, profile, onSignOut }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [joinScannerOpen, setJoinScannerOpen] = useState(false)
-  const [joinScannerError, setJoinScannerError] = useState('')
   const [joinBusy, setJoinBusy] = useState(false)
-  const scannerRef = useRef(null)
+  const [scannerError, setScannerError] = useState('')
   const [selectedMembership, setSelectedMembership] = useState(null)
-
-  useEffect(() => () => { if (scannerRef.current) scannerRef.current.clear().catch(() => {}) }, [])
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
 
   useEffect(() => {
     let mounted = true
@@ -44,38 +42,72 @@ export default function CustomerPage({ session, profile, onSignOut }) {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [selectedMembership, joinScannerOpen])
 
-  const stopJoinScanner = async () => {
-    if (scannerRef.current) await scannerRef.current.clear().catch(() => {})
-    scannerRef.current = null
-    setJoinScannerOpen(false)
-  }
+  useEffect(() => {
+    if (!joinScannerOpen) {
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      return undefined
+    }
 
-  const startJoinScanner = async () => {
-    setJoinScannerError('')
-    setJoinBusy(true)
+    let cancelled = false
+    let scanTimer
+    const startCamera = async () => {
+      setJoinBusy(true)
+      setScannerError('')
+      if (!('BarcodeDetector' in window)) {
+        setScannerError(t('cameraScannerUnsupported'))
+        setJoinBusy(false)
+        return
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setScannerError(t('cameraScannerUnsupported'))
+        setJoinBusy(false)
+        return
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        streamRef.current = stream
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+        const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
+        const scan = async () => {
+          if (cancelled || !videoRef.current || videoRef.current.readyState < 2) return
+          try {
+            const detected = await detector.detect(videoRef.current)
+            const value = detected[0]?.rawValue
+            if (value && /^https?:\/\//i.test(value)) {
+              window.location.assign(value)
+              return
+            }
+          } catch {
+            // Continue scanning while the camera is active.
+          }
+          if (!cancelled) scanTimer = window.setTimeout(scan, 250)
+        }
+        setJoinBusy(false)
+        scan()
+      } catch {
+        setScannerError(t('cameraScannerPermission'))
+        setJoinBusy(false)
+      }
+    }
+    startCamera()
+    return () => {
+      cancelled = true
+      window.clearTimeout(scanTimer)
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+  }, [joinScannerOpen, t])
+
+  const openNativeCameraInstructions = () => {
     setJoinScannerOpen(true)
-    try {
-      const { Html5QrcodeScanner } = await import('html5-qrcode')
-      await new Promise((resolve) => window.requestAnimationFrame(resolve))
-      const reader = document.getElementById('customer-join-qr-reader')
-      if (!reader) throw new Error(t('scannerUnavailable'))
-      const scanner = new Html5QrcodeScanner('customer-join-qr-reader', { fps: 10, qrbox: { width: 220, height: 220 } }, false)
-      scanner.render(async (decodedText) => {
-        try {
-          const url = new URL(decodedText)
-          const match = url.pathname.match(/^\/join\/([^/]+)/)
-          if (!match) throw new Error(t('invalidBusinessQr'))
-          await stopJoinScanner()
-          const programResult = await getPublicProgram(match[1])
-          const joinResult = await joinProgram(session.access_token, match[1])
-          setMemberships((current) => [...current.filter((membership) => membership.id !== joinResult.membership?.id), { ...joinResult.membership, loyalty_programs: programResult.program }])
-          setError('')
-        } catch (scanError) { setJoinScannerError(scanError.message) }
-      }, () => {})
-      scannerRef.current = scanner
-    } catch (scannerError) {
-      setJoinScannerError(scannerError.message || t('cameraAccessFailed'))
-    } finally { setJoinBusy(false) }
+    setJoinBusy(true)
+    setScannerError('')
   }
 
   if (loading) return <div className="app-state"><strong>{t('loadingLoyaltyCards')}</strong></div>
@@ -89,10 +121,10 @@ export default function CustomerPage({ session, profile, onSignOut }) {
       </header>
       <section className="customer-hero">
         <div><p className="eyebrow">{t('loyaltyWallet')}</p><h1>{t('everyVisitCounts')}</h1><p className="heading-copy">{t('scanBusinessToJoin')}</p></div>
-        <button className="primary-button" onClick={startJoinScanner} disabled={joinBusy}><Camera size={16} /> {t('scanBusinessQr')}</button>
+        <button className="primary-button" onClick={openNativeCameraInstructions} disabled={joinBusy}><Camera size={16} /> {t('scanBusinessQr')}</button>
       </section>
       {memberships.length === 0 ? (
-        <section className="customer-empty"><Sparkles size={24} /><h2>{t('joinFirstProgram')}</h2><p>{t('askBusinessToScan')}</p><button className="primary-button" onClick={startJoinScanner} disabled={joinBusy}><Camera size={16} /> {t('scanBusinessQr')}</button></section>
+        <section className="customer-empty"><Sparkles size={24} /><h2>{t('joinFirstProgram')}</h2><p>{t('askBusinessToScan')}</p><button className="primary-button" onClick={openNativeCameraInstructions} disabled={joinBusy}><Camera size={16} /> {t('scanBusinessQr')}</button></section>
       ) : (
         <section className="membership-grid">
           {memberships.map((membership) => {
@@ -117,7 +149,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
         </section>
       )}
       {transactions.length > 0 && <section className="customer-history"><div className="panel-heading"><div><h2>{t('recentActivity')}</h2><p>{t('latestLoyaltyMovements')}</p></div></div>{transactions.slice(0, 8).map((transaction) => { const delta = transaction.stamps_delta || transaction.points_delta; return <div className="history-row" key={transaction.id}><span>{transaction.type === 'EARN' ? t('loyaltyEarned') : t('rewardRedeemed')}</span><strong className={delta > 0 ? 'history-positive' : 'history-negative'}>{delta > 0 ? '+' : ''}{delta}</strong><small>{new Date(transaction.created_at).toLocaleDateString()}</small></div> })}</section>}
-      {joinScannerOpen && <div className="qr-modal-backdrop" role="presentation" onClick={stopJoinScanner}><section className="qr-modal customer-scanner-modal" role="dialog" aria-modal="true" aria-label={t('scanBusinessJoinQr')} onClick={(event) => event.stopPropagation()}><button className="icon-button qr-close" onClick={stopJoinScanner} aria-label={t('close')}><X size={18} /></button><p className="eyebrow">{t('joinBusinessProgram')}</p><h2>{t('scanBusinessQr')}</h2><div id="customer-join-qr-reader" className="customer-join-qr-reader" /><p className="heading-copy">{t('pointCameraAtBusinessQr')}</p>{joinScannerError && <p className="form-error">{joinScannerError}</p>}</section></div>}
+      {joinScannerOpen && <div className="qr-modal-backdrop" role="presentation" onClick={() => setJoinScannerOpen(false)}><section className="qr-modal customer-scanner-modal" role="dialog" aria-modal="true" aria-label={t('scanBusinessJoinQr')} onClick={(event) => event.stopPropagation()}><button className="icon-button qr-close" onClick={() => setJoinScannerOpen(false)} aria-label={t('close')}><X size={18} /></button><p className="eyebrow">{t('joinBusinessProgram')}</p><h2>{t('cameraScannerTitle')}</h2><p className="heading-copy">{t('cameraScannerInstructions')}</p><video ref={videoRef} className="customer-camera-preview" muted playsInline autoPlay aria-label={t('cameraScannerTitle')} />{scannerError ? <p className="form-error">{scannerError}</p> : <p className="camera-status">{joinBusy ? t('pleaseWait') : t('cameraScannerWaiting')}</p>}<button className="primary-button" onClick={() => setJoinScannerOpen(false)}>{t('stopCamera')}</button></section></div>}
       {selectedMembership && <div className="qr-modal-backdrop" role="presentation" onClick={() => setSelectedMembership(null)}><section className="qr-modal" role="dialog" aria-modal="true" aria-label={t('customerMembershipQr')} onClick={(event) => event.stopPropagation()}><button className="text-button qr-close" onClick={() => setSelectedMembership(null)}>{t('close')}</button><p className="eyebrow">{t('showAtCounter')}</p><h2>{selectedMembership.loyalty_programs?.businesses?.name}</h2><QRCodeSVG value={selectedMembership.secure_token} size={220} includeMargin /><p className="heading-copy">{t('secureMembershipIdentifier')}</p></section></div>}
     </main>
   )

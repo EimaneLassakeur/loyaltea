@@ -76,8 +76,8 @@ export async function getPendingBusinessSubscription(userId) {
   return result.rows[0] || null
 }
 
-export async function getSubscriptionPlans() {
-  const result = await pool.query(`select id, name, description, price, currency, duration_days, features from public.subscription_plans where is_active order by price, name`)
+export async function getSubscriptionPlans(includeInactive = false) {
+  const result = await pool.query(`select id, name, description, price, currency, duration_days, features, is_active from public.subscription_plans ${includeInactive ? '' : 'where is_active'} order by price, name`)
   return result.rows
 }
 
@@ -113,9 +113,51 @@ export async function finishBusinessProvisioning({ ownerUserId, adminUserId, bus
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
 }
 
+export async function updateBusinessLifecycle({ businessId, status, actorUserId }) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const businessResult = await client.query('select id, name, status from public.businesses where id = $1 for update', [businessId])
+    if (!businessResult.rowCount) throw httpError(404, 'Business was not found')
+    if (status === 'paused' || status === 'suspended') await client.query("update public.subscriptions set status = 'suspended', updated_by = $2, updated_at = now() where business_id = $1 and status in ('pending', 'active', 'past_due')", [businessId, actorUserId])
+    if (status === 'active') await client.query("update public.subscriptions set status = 'active', updated_by = $2, updated_at = now() where business_id = $1 and status = 'suspended' and ends_at > now()", [businessId, actorUserId])
+    const result = await client.query('update public.businesses set status = $2, updated_at = now() where id = $1 returning id, name, slug, status', [businessId, status])
+    await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, $3, 'business', $2, $4)`, [actorUserId, businessId, `business.${status}`, JSON.stringify({ previous_status: businessResult.rows[0].status, next_status: status })])
+    await client.query('commit')
+    return result.rows[0]
+  } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+}
+
+export async function archiveBusiness({ businessId, actorUserId }) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const businessResult = await client.query('select id, name, status from public.businesses where id = $1 for update', [businessId])
+    if (!businessResult.rowCount) throw httpError(404, 'Business was not found')
+    await client.query("update public.businesses set status = 'suspended', archived_at = now(), updated_at = now() where id = $1", [businessId])
+    await client.query("update public.subscriptions set status = 'cancelled', updated_by = $2, updated_at = now() where business_id = $1 and status in ('pending', 'active', 'past_due', 'suspended')", [businessId, actorUserId])
+    await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, 'business.archived', 'business', $2, $3)`, [actorUserId, businessId, JSON.stringify({ previous_status: businessResult.rows[0].status })])
+    await client.query('commit')
+    return { id: businessId, archived: true }
+  } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+}
+
+export async function createSubscriptionPlan({ actorUserId, name, description, price, currency, durationDays, features }) {
+  const result = await pool.query('insert into public.subscription_plans (name, description, price, currency, duration_days, features) values ($1, $2, $3, $4, $5, $6) returning *', [name, description || null, price, currency || 'DZD', durationDays, JSON.stringify(features || {})])
+  await pool.query(`insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.created', 'subscription_plan', $2, $3)`, [actorUserId, result.rows[0].id, JSON.stringify({ name, price, duration_days: durationDays })])
+  return result.rows[0]
+}
+
+export async function updateSubscriptionPlan({ actorUserId, planId, name, description, price, currency, durationDays, features, isActive }) {
+  const result = await pool.query('update public.subscription_plans set name = $2, description = $3, price = $4, currency = $5, duration_days = $6, features = $7, is_active = $8, updated_at = now() where id = $1 returning *', [planId, name, description || null, price, currency || 'DZD', durationDays, JSON.stringify(features || {}), isActive])
+  if (!result.rowCount) throw httpError(404, 'Subscription plan was not found')
+  await pool.query(`insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.updated', 'subscription_plan', $2, $3)`, [actorUserId, planId, JSON.stringify({ is_active: isActive })])
+  return result.rows[0]
+}
+
 export async function getPlatformOverview() {
   const result = await pool.query(`
-    select b.id, b.name, b.slug, b.created_at,
+    select b.id, b.name, b.slug, b.status, b.created_at,
       (select count(*)::int from public.loyalty_programs p where p.business_id = b.id and p.is_active) as active_programs,
       (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = b.id) as customers,
       (select count(*)::int from public.transactions t where t.business_id = b.id) as transactions,
@@ -195,14 +237,16 @@ export async function earnLoyalty({ userId, membershipId, locationId, model, amo
   try {
     await client.query('begin')
     const membershipResult = await client.query(`
-      select m.*, p.business_id, p.model, p.points_per_currency, p.is_active as program_active
+      select m.*, p.business_id, p.model, p.points_per_currency, p.is_active as program_active, b.status as business_status
       from public.customer_memberships m
       join public.loyalty_programs p on p.id = m.program_id
+      join public.businesses b on b.id = p.business_id
       where m.id = $1
       for update
     `, [membershipId])
     const membership = membershipResult.rows[0]
     if (!membership || !membership.is_active) throw httpError(404, 'Membership is not active')
+    if (membership.business_status !== 'active') throw httpError(403, 'This business is paused or unavailable')
     if (!membership.program_active) throw httpError(400, 'Loyalty program is inactive')
     if (membership.model !== model) throw httpError(400, 'Loyalty model does not match the program')
     if (!['STAMPS', 'POINTS'].includes(model)) throw httpError(400, 'Invalid loyalty model')
@@ -258,14 +302,16 @@ export async function redeemReward({ userId, membershipId, rewardId, locationId,
   try {
     await client.query('begin')
     const membershipResult = await client.query(`
-      select m.*, p.business_id, p.model, p.is_active as program_active
+      select m.*, p.business_id, p.model, p.is_active as program_active, b.status as business_status
       from public.customer_memberships m
       join public.loyalty_programs p on p.id = m.program_id
+      join public.businesses b on b.id = p.business_id
       where m.id = $1
       for update
     `, [membershipId])
     const membership = membershipResult.rows[0]
     if (!membership || !membership.is_active) throw httpError(404, 'Membership is not active')
+    if (membership.business_status !== 'active') throw httpError(403, 'This business is paused or unavailable')
 
     const rewardResult = await client.query(`
       select r.*, p.business_id, p.model, p.is_active as program_active

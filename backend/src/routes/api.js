@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit'
 import { config } from '../config.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { createAdminAuthClient, createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
-import { createBusinessProvisioning, createEmployee, createWorkspace, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, redeemReward } from '../database.js'
+import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
 import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 
 const router = Router()
@@ -84,6 +84,23 @@ router.get('/public/programs/:programId', async (request, response, next) => {
   }
 })
 
+router.get('/public/businesses/:businessSlug', async (request, response, next) => {
+  try {
+    const { data, error } = await createPublicClient()
+      .from('businesses')
+      .select('id, name, slug, logo_url, loyalty_programs(id, name, description, model, currency_unit, is_active, rewards(id, name, description, image_url, required_stamps, required_points, expires_at, is_active))')
+      .eq('slug', request.params.businessSlug)
+      .maybeSingle()
+    if (error) return next(error)
+    const program = data?.loyalty_programs?.find((item) => item.is_active)
+    if (!data || !program) return response.status(404).json({ error: 'Business or active loyalty program not found' })
+    const subscription = await getBusinessSubscription(data.id)
+    return response.json({ business: { id: data.id, name: data.name, slug: data.slug, logo_url: data.logo_url, status: data.status }, program: { ...program, business_id: data.id, businesses: { id: data.id, name: data.name, slug: data.slug, logo_url: data.logo_url } }, acceptingMemberships: data.status === 'active' && subscriptionAllowsAccess(subscription) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 router.use(requireAuth)
 
 router.get('/me', async (request, response, next) => {
@@ -139,10 +156,26 @@ router.get('/admin/overview', requireRoles('PLATFORM_ADMIN'), async (_request, r
 
 router.get('/admin/subscription-plans', requireRoles('PLATFORM_ADMIN'), async (_request, response, next) => {
   try {
-    return response.json({ plans: await getSubscriptionPlans() })
+    return response.json({ plans: await getSubscriptionPlans(true) })
   } catch (error) {
     return next(error)
   }
+})
+
+router.post('/admin/subscription-plans', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try {
+    const { name, description, price, currency, durationDays, features } = request.body || {}
+    if (!name?.trim() || !Number.isFinite(Number(price)) || Number(price) < 0 || !Number.isInteger(Number(durationDays)) || Number(durationDays) <= 0) return response.status(400).json({ error: 'Plan name, non-negative price, and positive duration are required' })
+    return response.status(201).json({ plan: await createSubscriptionPlan({ actorUserId: request.user.id, name: name.trim(), description, price: Number(price), currency, durationDays: Number(durationDays), features }) })
+  } catch (error) { return next(error) }
+})
+
+router.patch('/admin/subscription-plans/:planId', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try {
+    const { name, description, price, currency, durationDays, features, isActive } = request.body || {}
+    if (!isUuid(request.params.planId) || !name?.trim() || !Number.isFinite(Number(price)) || Number(price) < 0 || !Number.isInteger(Number(durationDays)) || Number(durationDays) <= 0 || typeof isActive !== 'boolean') return response.status(400).json({ error: 'Valid plan fields are required' })
+    return response.json({ plan: await updateSubscriptionPlan({ actorUserId: request.user.id, planId: request.params.planId, name: name.trim(), description, price: Number(price), currency, durationDays: Number(durationDays), features, isActive }) })
+  } catch (error) { return next(error) }
 })
 
 router.post('/admin/businesses/provision', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
@@ -184,6 +217,16 @@ router.post('/admin/subscriptions/renew-cash', requireRoles('PLATFORM_ADMIN'), a
   } catch (error) {
     return next(error)
   }
+})
+
+router.post('/admin/businesses/:businessId/pause', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try { return response.json({ business: await updateBusinessLifecycle({ businessId: request.params.businessId, status: 'paused', actorUserId: request.user.id }) }) } catch (error) { return next(error) }
+})
+router.post('/admin/businesses/:businessId/resume', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try { return response.json({ business: await updateBusinessLifecycle({ businessId: request.params.businessId, status: 'active', actorUserId: request.user.id }) }) } catch (error) { return next(error) }
+})
+router.delete('/admin/businesses/:businessId', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try { return response.json(await archiveBusiness({ businessId: request.params.businessId, actorUserId: request.user.id })) } catch (error) { return next(error) }
 })
 
 router.post('/admin/subscriptions/expire', requireRoles('PLATFORM_ADMIN'), async (_request, response, next) => {
@@ -237,8 +280,13 @@ router.post('/public/programs/:programId/join', requireRoles('CUSTOMER'), async 
       .maybeSingle()
     if (programError) return next(programError)
     if (!program) return response.status(404).json({ error: 'Program not found or inactive' })
+    const { data: business, error: businessError } = await request.supabase.from('businesses').select('status').eq('id', program.business_id).maybeSingle()
+    if (businessError) return next(businessError)
     const subscription = await getBusinessSubscription(program.business_id)
-    if (!subscriptionAllowsAccess(subscription)) return response.status(403).json({ error: 'This business is not currently accepting new memberships', code: 'BUSINESS_SUBSCRIPTION_INACTIVE' })
+    if (business?.status !== 'active' || !subscriptionAllowsAccess(subscription)) return response.status(403).json({ error: 'This business is not currently accepting new memberships', code: 'BUSINESS_SUBSCRIPTION_INACTIVE' })
+    const existingMembership = await request.supabase.from('customer_memberships').select('id, is_active').eq('customer_id', request.user.id).eq('program_id', request.params.programId).maybeSingle()
+    if (existingMembership.error) return next(existingMembership.error)
+    if (existingMembership.data?.is_active) return response.status(409).json({ error: 'You are already enrolled in this business program', code: 'MEMBERSHIP_EXISTS' })
     const { data, error } = await request.supabase
       .from('customer_memberships')
       .upsert({ customer_id: request.user.id, program_id: request.params.programId, is_active: true }, { onConflict: 'customer_id,program_id' })

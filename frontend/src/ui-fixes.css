@@ -45,8 +45,23 @@
 .admin-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .admin-insight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .admin-business-table { overflow-x: auto; }
-.admin-business-row { grid-template-columns: minmax(170px, 1.4fr) minmax(140px, 1fr) minmax(86px, .65fr) minmax(86px, .65fr) minmax(78px, auto); }
+.admin-business-row { grid-template-columns: minmax(170px, 1.4fr) minmax(140px, 1fr) minmax(86px, .65fr) minmax(86px, .65fr) minmax(92px, .7fr) minmax(190px, auto); }
+.business-status-active { color: #438a72; background: #e8f7f1; }
+.business-status-paused, .business-status-pending { color: #9b7024; background: #fff5d9; }
+.business-status-suspended { color: var(--coral-deep); background: var(--coral-pale); }
+.danger-button { color: var(--coral-deep); }
+.plan-management-panel { margin-top: 14px; }
+.plan-form { display: grid; grid-template-columns: 1.1fr 1.5fr .7fr .8fr auto; gap: 9px; margin-top: 18px; }
+.plan-form input { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: var(--ink); font-size: 11px; }
+.plan-list { display: grid; gap: 8px; margin-top: 16px; }
+.plan-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.plan-row strong, .plan-row small { display: block; }
+.plan-row strong { font-size: 11px; }
+.plan-row small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.qr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-business-row .secondary-button { justify-self: start; }
+.business-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qr-destination { max-width: 100%; overflow: auto; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font: 9px 'DM Mono', monospace; }
 
 .subscription-renewal-form {
   display: grid;
@@ -95,13 +110,15 @@
   .admin-business-table { overflow: visible; }
   .admin-business-table .admin-business-row.table-header { display: none; }
   .admin-business-table .admin-business-row:not(.table-header) { display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; min-height: 0; padding: 14px 0; }
+  .plan-form { grid-template-columns: 1fr; }
   .admin-business-table .admin-business-row > span,
   .admin-business-table .admin-business-row > strong { display: flex; justify-content: space-between; gap: 12px; min-width: 0; font-size: 11px; }
   .admin-business-table .admin-business-row > span::before,
   .admin-business-table .admin-business-row > strong::before { content: attr(data-label); color: var(--muted); font: 9px 'DM Mono', monospace; text-transform: uppercase; }
   .admin-business-table .admin-business-row > strong { grid-column: 1 / -1; color: var(--ink); font-size: 13px; }
   .admin-business-table .admin-business-row > strong::before { display: none; }
-  .admin-business-table .admin-business-row > .secondary-button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  .admin-business-table .admin-business-row > .business-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .admin-business-table .admin-business-row > .business-actions .secondary-button { grid-column: auto; grid-row: auto; align-self: auto; }
   .selected-business-details .settings-list { grid-template-columns: 1fr; }
   .renewal-heading, .renewal-actions, .provision-form-heading { align-items: stretch; flex-direction: column; }
   .renewal-fields, .provision-fields { grid-template-columns: 1fr; }

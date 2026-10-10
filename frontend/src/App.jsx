@@ -9,10 +9,12 @@ import CustomerPage from './pages/CustomerPage'
 
 export default function App() {
   const { session, profile, loading, error, signIn, signUp, signOut, clearError } = useAuth()
-  const joinMatch = window.location.pathname.match(/^\/join\/([^/]+)/)
+  const businessJoinMatch = window.location.pathname.match(/^\/join\/business\/([^/]+)$/)
+  const legacyProgramJoinMatch = window.location.pathname.match(/^\/join\/([^/]+)$/)
 
   if (loading) return <div className="app-state"><strong>Loading your workspace...</strong></div>
-  if (joinMatch) return <JoinScreen programId={joinMatch[1]} session={session} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
+  if (businessJoinMatch) return <JoinScreen businessSlug={businessJoinMatch[1]} session={session} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
+  if (legacyProgramJoinMatch) return <JoinScreen programId={legacyProgramJoinMatch[1]} session={session} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
   if (!session) return <AuthScreen onSignIn={signIn} onSignUp={signUp} onClearError={clearError} error={error} />
   if (profile?.role === 'PLATFORM_ADMIN') return <PlatformAdminScreen session={session} profile={profile} onSignOut={signOut} />
   if (profile?.role === 'BUSINESS_OWNER' && profile.pendingSubscription && profile.pendingSubscription.status !== 'active') return <PendingSubscriptionScreen subscription={profile.pendingSubscription} onRefresh={() => window.location.reload()} onSignOut={signOut} />
