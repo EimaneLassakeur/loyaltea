@@ -18,6 +18,9 @@ function formatWhatsappUrl(phone) {
 export default function PlatformAdminScreen({ session, profile, onSignOut }) {
   const { t, language } = usePreferences()
   const [businesses, setBusinesses] = useState([])
+  const [archivedBusinesses, setArchivedBusinesses] = useState([])
+  const [directoryTab, setDirectoryTab] = useState('active')
+  const [actionFeedback, setActionFeedback] = useState(null)
   const [totals, setTotals] = useState({ businesses: 0, activePrograms: 0, customers: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -36,6 +39,7 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
   const [planMessage, setPlanMessage] = useState('')
 
   const filteredBusinesses = useMemo(() => businesses.filter((business) => `${business.name} ${business.slug}`.toLowerCase().includes(businessSearch.toLowerCase())), [businesses, businessSearch])
+  const filteredArchivedBusinesses = useMemo(() => archivedBusinesses.filter((business) => `${business.name} ${business.slug}`.toLowerCase().includes(businessSearch.toLowerCase())), [archivedBusinesses, businessSearch])
   const formatDate = (value) => new Intl.DateTimeFormat(language, { dateStyle: 'medium' }).format(new Date(value))
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
           apiFetch('/api/admin/subscription-plans', session.access_token),
         ])
         setBusinesses(result.businesses || [])
+        setArchivedBusinesses(result.archivedBusinesses || [])
         setPlans(plansResult.plans || [])
         setTotals(result.totals || { businesses: 0, activePrograms: 0, customers: 0 })
         const subscriptionEntries = await Promise.all((result.businesses || []).map(async (business) => {
@@ -171,9 +176,135 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
             <article className="panel info-panel"><div className="panel-heading"><div><h2>{t('quickActions')}</h2><p>{t('quickActionsCopy')}</p></div></div><div className="lookup-actions"><button className="secondary-button" onClick={() => setActiveView('Businesses')}><Users size={15} />{t('reviewBusinesses')}</button><button className="secondary-button" onClick={() => window.location.reload()}><Activity size={15} />{t('reloadOverview')}</button></div></article>
           </section>
           </>}
-          {activeView === 'Businesses' && <section className="panel customers-panel"><div className="panel-heading"><div><h2>{t('managedBusinesses')}</h2><p>{t('managedBusinessesCopy')}</p></div><button className="primary-button" onClick={() => { setShowProvisionForm((visible) => !visible); setProvisionMessage('') }}><Store size={15} />{showProvisionForm ? t('closeForm') : t('createBusiness')}</button></div>{showProvisionForm && <form className="provision-form" onSubmit={async (event) => { event.preventDefault(); setProvisionMessage(''); try { const result = await apiFetch('/api/admin/businesses/provision', session.access_token, { method: 'POST', body: JSON.stringify(provisionForm) }); setBusinesses((current) => [{ ...result.business, active_programs: 0, customers: 0, transactions: 0, redemptions: 0 }, ...current]); setSubscriptionByBusiness((current) => ({ ...current, [result.business.id]: result.subscription })); setProvisionForm({ businessName: '', slug: '', ownerFullName: '', ownerEmail: '', ownerPhone: '', ownerPassword: '', planId: '' }); setProvisionMessage(t('pendingUntilPaid')); } catch (err) { setProvisionMessage(err.message) } }}><div className="provision-form-heading"><div><h3>{t('createBusinessAccount')}</h3><p>{t('createsPendingBusiness')}</p></div><span className="renewal-badge">{t('pendingUntilPaid')}</span></div><div className="provision-fields"><label>{t('businessNameLabel')}<input required value={provisionForm.businessName} onChange={(event) => setProvisionForm({ ...provisionForm, businessName: event.target.value })} /></label><label>{t('businessSlugLabel')}<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={provisionForm.slug} onChange={(event) => setProvisionForm({ ...provisionForm, slug: event.target.value.toLowerCase() })} /></label><label>{t('ownerFullNameLabel')}<input required value={provisionForm.ownerFullName} onChange={(event) => setProvisionForm({ ...provisionForm, ownerFullName: event.target.value })} /></label><label>{t('ownerEmailLabel')}<input type="email" value={provisionForm.ownerEmail} onChange={(event) => setProvisionForm({ ...provisionForm, ownerEmail: event.target.value })} /></label><label>{t('ownerPhoneLabel')}<input type="tel" placeholder="+213..." value={provisionForm.ownerPhone} onChange={(event) => setProvisionForm({ ...provisionForm, ownerPhone: event.target.value })} /></label><label>{t('temporaryPassword')}<input required minLength="8" type="password" value={provisionForm.ownerPassword} onChange={(event) => setProvisionForm({ ...provisionForm, ownerPassword: event.target.value })} /></label><label className="plan-field">{t('subscriptionPlanLabel')}<select required value={provisionForm.planId} onChange={(event) => setProvisionForm({ ...provisionForm, planId: event.target.value })}><option value="">{t('selectPlan')}</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {plan.price} {plan.currency} / {plan.duration_days} {t('days')}</option>)}</select></label></div><button className="primary-button" type="submit">{t('createPendingBusiness')}</button>{provisionMessage && <p className={provisionMessage.includes('created') ? 'form-message' : 'form-error'}>{provisionMessage}</p>}</form>}<div className="customer-toolbar"><label className="search-box"><Users size={15} /><input value={businessSearch} onChange={(event) => setBusinessSearch(event.target.value)} placeholder={t('searchBusinesses')} /></label><span className="heading-copy">{filteredBusinesses.length} / {businesses.length}</span></div>
-            <div className="customer-table admin-business-table"><div className="table-row table-header admin-business-row"><span>{t('businessName')}</span><span>{t('slug')}</span><span>{t('programs')}</span><span>{t('customers')}</span><span>{t('status')}</span><span>{t('action')}</span></div>{filteredBusinesses.map((business) => <div className="table-row admin-business-row" key={business.id}><strong data-label={t('businessName')}>{business.name}</strong><span data-label={t('slug')}>{business.slug}</span><span data-label={t('programs')}>{business.active_programs}</span><span data-label={t('customers')}>{business.customers}</span><span data-label={t('status')} className={`status-pill business-status-${business.status || 'active'}`}>{t(`status${(business.status || 'active').charAt(0).toUpperCase()}${(business.status || 'active').slice(1)}`)}</span><div className="business-actions"><button className="secondary-button" onClick={() => setSelectedBusiness(business)}>{t('view')}</button><button className="secondary-button" onClick={async () => { if (!window.confirm(`${business.status === 'paused' ? t('resume') : t('pause')} ${business.name}?`)) return; try { const result = await apiFetch(`/api/admin/businesses/${business.id}/${business.status === 'paused' ? 'resume' : 'pause'}`, session.access_token, { method: 'POST' }); setBusinesses((current) => current.map((item) => item.id === business.id ? { ...item, status: result.business.status } : item)); } catch (err) { setError(err.message) } }}>{business.status === 'paused' ? t('resume') : t('pause')}</button><button className="secondary-button danger-button" onClick={async () => { if (!window.confirm(t('archiveBusinessConfirm'))) return; try { await apiFetch(`/api/admin/businesses/${business.id}`, session.access_token, { method: 'DELETE' }); setBusinesses((current) => current.filter((item) => item.id !== business.id)); setSelectedBusiness(null); } catch (err) { setError(err.message) } }}>{t('deleteBusiness')}</button></div></div>)}</div>
-            {!filteredBusinesses.length && <div className="panel-empty"><Store size={24} /><strong>{t('noBusinessesFound')}</strong><span>{t('noBusinessesFoundCopy')}</span></div>}
+          {activeView === 'Businesses' && <section className="panel customers-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>{t('managedBusinesses')}</h2>
+                <p>{t('managedBusinessesCopy')}</p>
+              </div>
+              <button className="primary-button" onClick={() => { setShowProvisionForm((visible) => !visible); setProvisionMessage('') }}>
+                <Store size={15} />{showProvisionForm ? t('closeForm') : t('createBusiness')}
+              </button>
+            </div>
+
+            {actionFeedback && (
+              <div className={`form-message ${actionFeedback.type === 'error' ? 'form-error' : 'form-message-success'}`} style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{actionFeedback.message}</span>
+                <button type="button" className="text-button" style={{ marginLeft: '12px', cursor: 'pointer' }} onClick={() => setActionFeedback(null)}>✕</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button
+                type="button"
+                className={`secondary-button ${directoryTab === 'active' ? 'primary-button' : ''}`}
+                onClick={() => { setDirectoryTab('active'); setActionFeedback(null) }}
+              >
+                {t('activeBusinesses')} ({businesses.length})
+              </button>
+              <button
+                type="button"
+                className={`secondary-button ${directoryTab === 'archived' ? 'primary-button' : ''}`}
+                onClick={() => { setDirectoryTab('archived'); setActionFeedback(null) }}
+              >
+                {t('archivedBusinesses')} ({archivedBusinesses.length})
+              </button>
+            </div>
+
+            {showProvisionForm && <form className="provision-form" onSubmit={async (event) => { event.preventDefault(); setProvisionMessage(''); try { const result = await apiFetch('/api/admin/businesses/provision', session.access_token, { method: 'POST', body: JSON.stringify(provisionForm) }); setBusinesses((current) => [{ ...result.business, active_programs: 0, customers: 0, transactions: 0, redemptions: 0 }, ...current]); setSubscriptionByBusiness((current) => ({ ...current, [result.business.id]: result.subscription })); setProvisionForm({ businessName: '', slug: '', ownerFullName: '', ownerEmail: '', ownerPhone: '', ownerPassword: '', planId: '' }); setProvisionMessage(t('pendingUntilPaid')); } catch (err) { setProvisionMessage(err.message) } }}><div className="provision-form-heading"><div><h3>{t('createBusinessAccount')}</h3><p>{t('createsPendingBusiness')}</p></div><span className="renewal-badge">{t('pendingUntilPaid')}</span></div><div className="provision-fields"><label>{t('businessNameLabel')}<input required value={provisionForm.businessName} onChange={(event) => setProvisionForm({ ...provisionForm, businessName: event.target.value })} /></label><label>{t('businessSlugLabel')}<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={provisionForm.slug} onChange={(event) => setProvisionForm({ ...provisionForm, slug: event.target.value.toLowerCase() })} /></label><label>{t('ownerFullNameLabel')}<input required value={provisionForm.ownerFullName} onChange={(event) => setProvisionForm({ ...provisionForm, ownerFullName: event.target.value })} /></label><label>{t('ownerEmailLabel')}<input type="email" value={provisionForm.ownerEmail} onChange={(event) => setProvisionForm({ ...provisionForm, ownerEmail: event.target.value })} /></label><label>{t('ownerPhoneLabel')}<input type="tel" placeholder="+213..." value={provisionForm.ownerPhone} onChange={(event) => setProvisionForm({ ...provisionForm, ownerPhone: event.target.value })} /></label><label>{t('temporaryPassword')}<input required minLength="8" type="password" value={provisionForm.ownerPassword} onChange={(event) => setProvisionForm({ ...provisionForm, ownerPassword: event.target.value })} /></label><label className="plan-field">{t('subscriptionPlanLabel')}<select required value={provisionForm.planId} onChange={(event) => setProvisionForm({ ...provisionForm, planId: event.target.value })}><option value="">{t('selectPlan')}</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {plan.price} {plan.currency} / {plan.duration_days} {t('days')}</option>)}</select></label></div><button className="primary-button" type="submit">{t('createPendingBusiness')}</button>{provisionMessage && <p className={provisionMessage.includes('created') ? 'form-message' : 'form-error'}>{provisionMessage}</p>}</form>}
+
+            <div className="customer-toolbar"><label className="search-box"><Users size={15} /><input value={businessSearch} onChange={(event) => setBusinessSearch(event.target.value)} placeholder={t('searchBusinesses')} /></label><span className="heading-copy">{directoryTab === 'active' ? `${filteredBusinesses.length} / ${businesses.length}` : `${filteredArchivedBusinesses.length} / ${archivedBusinesses.length}`}</span></div>
+
+            {directoryTab === 'active' ? (
+              <>
+                <div className="customer-table admin-business-table">
+                  <div className="table-row table-header admin-business-row">
+                    <span>{t('businessName')}</span>
+                    <span>{t('slug')}</span>
+                    <span>{t('programs')}</span>
+                    <span>{t('customers')}</span>
+                    <span>{t('status')}</span>
+                    <span>{t('action')}</span>
+                  </div>
+                  {filteredBusinesses.map((business) => (
+                    <div className="table-row admin-business-row" key={business.id}>
+                      <strong data-label={t('businessName')}>{business.name}</strong>
+                      <span data-label={t('slug')}>{business.slug}</span>
+                      <span data-label={t('programs')}>{business.active_programs}</span>
+                      <span data-label={t('customers')}>{business.customers}</span>
+                      <span data-label={t('status')} className={`status-pill business-status-${business.status || 'active'}`}>
+                        {t(`status${(business.status || 'active').charAt(0).toUpperCase()}${(business.status || 'active').slice(1)}`)}
+                      </span>
+                      <div className="business-actions">
+                        <button className="secondary-button" onClick={() => setSelectedBusiness(business)}>{t('view')}</button>
+                        <button className="secondary-button" onClick={async () => {
+                          if (!window.confirm(`${business.status === 'paused' ? t('resume') : t('pause')} ${business.name}?`)) return;
+                          try {
+                            const result = await apiFetch(`/api/admin/businesses/${business.id}/${business.status === 'paused' ? 'resume' : 'pause'}`, session.access_token, { method: 'POST' });
+                            setBusinesses((current) => current.map((item) => item.id === business.id ? { ...item, status: result.business.status } : item));
+                            setActionFeedback({ type: 'success', message: `Business "${business.name}" status updated to ${result.business.status}.` });
+                          } catch (err) {
+                            setError(err.message);
+                            setActionFeedback({ type: 'error', message: err.message });
+                          }
+                        }}>
+                          {business.status === 'paused' ? t('resume') : t('pause')}
+                        </button>
+                        <button className="secondary-button danger-button" onClick={async () => {
+                          if (!window.confirm(t('archiveBusinessConfirm'))) return;
+                          try {
+                            const result = await apiFetch(`/api/admin/businesses/${business.id}`, session.access_token, { method: 'DELETE' });
+                            setBusinesses((current) => current.filter((item) => item.id !== business.id));
+                            if (result.action === 'archived') {
+                              setArchivedBusinesses((current) => [{ ...business, archived_at: new Date().toISOString(), status: 'suspended' }, ...current]);
+                            }
+                            if (selectedBusiness?.id === business.id) {
+                              setSelectedBusiness(null);
+                            }
+                            setActionFeedback({ type: 'success', message: result.message || 'Business processed successfully.' });
+                            setError('');
+                          } catch (err) {
+                            setError(err.message);
+                            setActionFeedback({ type: 'error', message: err.message });
+                          }
+                        }}>
+                          {t('deleteBusiness')}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!filteredBusinesses.length && <div className="panel-empty"><Store size={24} /><strong>{t('noBusinessesFound')}</strong><span>{t('noBusinessesFoundCopy')}</span></div>}
+              </>
+            ) : (
+              <>
+                <div className="customer-table admin-business-table">
+                  <div className="table-row table-header admin-business-row">
+                    <span>{t('businessName')}</span>
+                    <span>{t('slug')}</span>
+                    <span>{t('archivedAt')}</span>
+                    <span>{t('customers')}</span>
+                    <span>{t('status')}</span>
+                    <span>{t('action')}</span>
+                  </div>
+                  {filteredArchivedBusinesses.map((business) => (
+                    <div className="table-row admin-business-row" key={business.id}>
+                      <strong data-label={t('businessName')}>{business.name}</strong>
+                      <span data-label={t('slug')}>{business.slug}</span>
+                      <span data-label={t('archivedAt')}>{business.archived_at ? formatDate(business.archived_at) : '—'}</span>
+                      <span data-label={t('customers')}>{business.customers || 0}</span>
+                      <span data-label={t('status')} className="status-pill business-status-suspended">
+                        {t('archived')}
+                      </span>
+                      <div className="business-actions">
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>{t('auditPreserved')}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!filteredArchivedBusinesses.length && <div className="panel-empty"><Store size={24} /><strong>{t('noArchivedBusinesses')}</strong><span>{t('noArchivedBusinessesCopy')}</span></div>}
+              </>
+            )}
           </section>}
           {activeView === 'Dashboard' && <section className="panel info-panel plan-management-panel"><div className="panel-heading"><div><h2>{t('subscriptionPlans')}</h2><p>{t('managePlansCopy')}</p></div></div><form className="plan-form" onSubmit={async (event) => { event.preventDefault(); setPlanMessage(''); try { const result = await apiFetch('/api/admin/subscription-plans', session.access_token, { method: 'POST', body: JSON.stringify({ ...planForm, price: Number(planForm.price), durationDays: Number(planForm.durationDays) }) }); setPlans((current) => [...current, result.plan]); setPlanForm({ name: '', description: '', price: '', durationDays: '30', currency: 'DZD' }); setPlanMessage(t('planCreated')); } catch (err) { setPlanMessage(err.message) } }}><input required placeholder={t('planNamePlaceholder')} value={planForm.name} onChange={(event) => setPlanForm({ ...planForm, name: event.target.value })} /><input placeholder={t('descriptionPlaceholder')} value={planForm.description} onChange={(event) => setPlanForm({ ...planForm, description: event.target.value })} /><input required min="0" step="0.01" type="number" placeholder={t('pricePlaceholder')} value={planForm.price} onChange={(event) => setPlanForm({ ...planForm, price: event.target.value })} /><input required min="1" step="1" type="number" placeholder={t('durationDaysPlaceholder')} value={planForm.durationDays} onChange={(event) => setPlanForm({ ...planForm, durationDays: event.target.value })} /><button className="primary-button" type="submit">{t('createPlan')}</button></form>{planMessage && <p className="form-message">{planMessage}</p>}<div className="plan-list">{plans.map((plan) => <div className="plan-row" key={plan.id}><div><strong>{plan.name}</strong><small>{plan.price} {plan.currency} · {plan.duration_days} {t('days')}</small></div><button className="secondary-button" onClick={async () => { try { const result = await apiFetch(`/api/admin/subscription-plans/${plan.id}`, session.access_token, { method: 'PATCH', body: JSON.stringify({ name: plan.name, description: plan.description, price: plan.price, currency: plan.currency, durationDays: plan.duration_days, features: plan.features, isActive: !plan.is_active }) }); setPlans((current) => current.map((item) => item.id === plan.id ? result.plan : item)); } catch (err) { setPlanMessage(err.message) } }}>{plan.is_active ? t('deactivate') : t('activate')}</button></div>)}</div></section>}
           {error && <p className="form-error">{t('loadError')}: {error}</p>}

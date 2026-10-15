@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit'
 import { config } from '../config.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { createAdminAuthClient, createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
-import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, pool, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
+import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, deleteOrArchiveBusiness, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, pool, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
 import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 import { normalizeEmail, normalizePhone } from '../authUtils.js'
 
@@ -446,7 +446,8 @@ router.post('/admin/businesses/:businessId/resume', requireRoles('PLATFORM_ADMIN
 router.delete('/admin/businesses/:businessId', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
   try {
     if (!isUuid(request.params.businessId)) return response.status(400).json({ error: 'Invalid business identifier' })
-    return response.json(await archiveBusiness({ businessId: request.params.businessId, actorUserId: request.user.id }))
+    const mode = request.query.mode || request.body?.mode || 'auto'
+    return response.json(await deleteOrArchiveBusiness({ businessId: request.params.businessId, actorUserId: request.user.id, mode }))
   } catch (error) { return next(error) }
 })
 

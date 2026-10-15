@@ -23,13 +23,15 @@ pool.on('error', (error) => {
 export async function getAccessibleBusinessIds(userId) {
   const roleResult = await pool.query('select role from public.users where id = $1', [userId])
   if (roleResult.rows[0]?.role === 'PLATFORM_ADMIN') {
-    const allBusinesses = await pool.query('select id from public.businesses')
+    const allBusinesses = await pool.query('select id from public.businesses where archived_at is null')
     return allBusinesses.rows.map((row) => row.id)
   }
   const result = await pool.query(`
-    select id from public.businesses where owner_user_id = $1
+    select id from public.businesses where owner_user_id = $1 and archived_at is null
     union
-    select business_id from public.employees where user_id = $1 and is_active
+    select e.business_id from public.employees e
+    join public.businesses b on b.id = e.business_id
+    where e.user_id = $1 and e.is_active and b.archived_at is null
   `, [userId])
   return result.rows.map((row) => row.id || row.business_id)
 }
@@ -69,7 +71,7 @@ export async function getPendingBusinessSubscription(userId) {
     from public.subscriptions s
     join public.businesses b on b.id = s.business_id
     join public.subscription_plans p on p.id = s.plan_id
-    where b.owner_user_id = $1
+    where b.owner_user_id = $1 and b.archived_at is null
     order by s.created_at desc
     limit 1
   `, [userId])
@@ -148,19 +150,137 @@ export async function updateBusinessLifecycle({ businessId, status, actorUserId 
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
 }
 
-export async function archiveBusiness({ businessId, actorUserId }) {
+export async function deleteOrArchiveBusiness({ businessId, actorUserId, mode = 'auto' }) {
   const client = await pool.connect()
   try {
     await client.query('begin')
-    const businessResult = await client.query('select id, name, status from public.businesses where id = $1 for update', [businessId])
+    const businessResult = await client.query(
+      'select id, name, slug, status, owner_user_id, archived_at from public.businesses where id = $1 for update',
+      [businessId]
+    )
     if (!businessResult.rowCount) throw httpError(404, 'Business was not found')
-    await client.query("update public.businesses set status = 'suspended', archived_at = now(), updated_at = now() where id = $1", [businessId])
-    await client.query("update public.subscriptions set status = 'cancelled', updated_by = $2, updated_at = now() where business_id = $1 and status in ('pending', 'active', 'past_due', 'suspended')", [businessId, actorUserId])
-    await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, 'business.archived', 'business', $2, $3)`, [actorUserId, businessId, JSON.stringify({ previous_status: businessResult.rows[0].status })])
+    const business = businessResult.rows[0]
+
+    // Inspect dependent financial & audit records
+    const depRes = await client.query(`
+      select
+        (select count(*)::int from public.subscription_payments where business_id = $1) as payments,
+        (select count(*)::int from public.transactions where business_id = $1) as transactions,
+        (select count(*)::int from public.reward_redemptions where business_id = $1) as redemptions
+    `, [businessId])
+    const { payments, transactions, redemptions } = depRes.rows[0]
+    const hasFinancialHistory = payments > 0 || transactions > 0 || redemptions > 0
+
+    if (mode === 'permanent' && hasFinancialHistory) {
+      throw httpError(
+        409,
+        `Cannot permanently delete business "${business.name}" because it contains ${payments} payment(s), ${transactions} transaction(s), and ${redemptions} redemption(s). Archiving was applied instead to preserve financial and audit records.`
+      )
+    }
+
+    if (hasFinancialHistory || mode === 'archive') {
+      // Soft-delete / archive: Suspend business, cancel subscriptions, deactivate programs & memberships
+      await client.query(
+        "update public.businesses set status = 'suspended', archived_at = now(), updated_at = now() where id = $1",
+        [businessId]
+      )
+      await client.query(
+        "update public.subscriptions set status = 'cancelled', updated_by = $2, updated_at = now() where business_id = $1 and status in ('pending', 'active', 'past_due', 'suspended')",
+        [businessId, actorUserId]
+      )
+      await client.query(
+        "update public.loyalty_programs set is_active = false, updated_at = now() where business_id = $1",
+        [businessId]
+      )
+      await client.query(
+        `update public.customer_memberships cm
+         set is_active = false, updated_at = now()
+         from public.loyalty_programs lp
+         where cm.program_id = lp.id and lp.business_id = $1`,
+        [businessId]
+      )
+
+      // Demote owner if they don't own any other active business and are not an admin
+      if (business.owner_user_id) {
+        const otherBiz = await client.query(
+          'select id from public.businesses where owner_user_id = $1 and id != $2 and archived_at is null limit 1',
+          [business.owner_user_id, businessId]
+        )
+        if (!otherBiz.rowCount) {
+          const userRole = await client.query('select role from public.users where id = $1', [business.owner_user_id])
+          if (userRole.rows[0]?.role === 'BUSINESS_OWNER') {
+            await client.query("update public.users set role = 'CUSTOMER', updated_at = now() where id = $1", [business.owner_user_id])
+            await client.query('insert into public.customers (id) values ($1) on conflict (id) do nothing', [business.owner_user_id])
+          }
+        }
+      }
+
+      await client.query(
+        `insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata)
+         values ($1, $2, 'business.archived', 'business', $2, $3)`,
+        [actorUserId, businessId, JSON.stringify({ previous_status: business.status, payments, transactions, redemptions })]
+      )
+
+      await client.query('commit')
+      return {
+        id: businessId,
+        action: 'archived',
+        name: business.name,
+        archived: true,
+        permanent: false,
+        message: hasFinancialHistory
+          ? `Business "${business.name}" was safely archived. Financial records (${payments} payment(s), ${transactions} transaction(s)) were preserved.`
+          : `Business "${business.name}" was archived.`,
+      }
+    }
+
+    // Clean permanent deletion for businesses with 0 payments, 0 transactions, 0 redemptions
+    await client.query('delete from public.subscriptions where business_id = $1', [businessId])
+    await client.query('delete from public.business_locations where business_id = $1', [businessId])
+    await client.query('delete from public.loyalty_programs where business_id = $1', [businessId])
+    await client.query('delete from public.employees where business_id = $1', [businessId])
+    await client.query('delete from public.customer_events where business_id = $1', [businessId])
+    await client.query('delete from public.businesses where id = $1', [businessId])
+
+    // Demote owner if they don't own any other active business and are not an admin
+    if (business.owner_user_id) {
+      const otherBiz = await client.query(
+        'select id from public.businesses where owner_user_id = $1 limit 1',
+        [business.owner_user_id]
+      )
+      if (!otherBiz.rowCount) {
+        const userRole = await client.query('select role from public.users where id = $1', [business.owner_user_id])
+        if (userRole.rows[0]?.role === 'BUSINESS_OWNER') {
+          await client.query("update public.users set role = 'CUSTOMER', updated_at = now() where id = $1", [business.owner_user_id])
+          await client.query('insert into public.customers (id) values ($1) on conflict (id) do nothing', [business.owner_user_id])
+        }
+      }
+    }
+
+    await client.query(
+      `insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata)
+       values ($1, 'business.deleted', 'business', $2, $3)`,
+      [actorUserId, businessId, JSON.stringify({ name: business.name, slug: business.slug })]
+    )
+
     await client.query('commit')
-    return { id: businessId, archived: true }
-  } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+    return {
+      id: businessId,
+      action: 'deleted',
+      name: business.name,
+      deleted: true,
+      permanent: true,
+      message: `Business "${business.name}" was permanently deleted.`,
+    }
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
 }
+
+export const archiveBusiness = deleteOrArchiveBusiness
 
 export async function createSubscriptionPlan({ actorUserId, name, description, price, currency, durationDays, features }) {
   const result = await pool.query('insert into public.subscription_plans (name, description, price, currency, duration_days, features) values ($1, $2, $3, $4, $5, $6) returning *', [name, description || null, price, currency || 'DZD', durationDays, JSON.stringify(features || {})])
@@ -176,25 +296,43 @@ export async function updateSubscriptionPlan({ actorUserId, planId, name, descri
 }
 
 export async function getPlatformOverview() {
-  const result = await pool.query(`
-    select b.id, b.name, b.slug, b.status, b.created_at, b.owner_user_id,
-      u.full_name as owner_name, u.phone as owner_phone,
-      au.email as owner_email,
-      (select address from public.business_locations bl where bl.business_id = b.id and bl.is_active order by bl.created_at asc limit 1) as address,
-      (select count(*)::int from public.loyalty_programs p where p.business_id = b.id and p.is_active) as active_programs,
-      (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = b.id) as customers,
-      (select count(*)::int from public.transactions t where t.business_id = b.id) as transactions,
-      (select count(*)::int from public.reward_redemptions r where r.business_id = b.id) as redemptions
-    from public.businesses b
-    left join public.users u on u.id = b.owner_user_id
-    left join auth.users au on au.id = b.owner_user_id
-    order by b.created_at desc
-  `)
-  const businesses = result.rows
+  const [activeResult, archivedResult] = await Promise.all([
+    pool.query(`
+      select b.id, b.name, b.slug, b.status, b.created_at, b.owner_user_id,
+        u.full_name as owner_name, u.phone as owner_phone,
+        au.email as owner_email,
+        (select address from public.business_locations bl where bl.business_id = b.id and bl.is_active order by bl.created_at asc limit 1) as address,
+        (select count(*)::int from public.loyalty_programs p where p.business_id = b.id and p.is_active) as active_programs,
+        (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = b.id) as customers,
+        (select count(*)::int from public.transactions t where t.business_id = b.id) as transactions,
+        (select count(*)::int from public.reward_redemptions r where r.business_id = b.id) as redemptions
+      from public.businesses b
+      left join public.users u on u.id = b.owner_user_id
+      left join auth.users au on au.id = b.owner_user_id
+      where b.archived_at is null
+      order by b.created_at desc
+    `),
+    pool.query(`
+      select b.id, b.name, b.slug, b.status, b.created_at, b.archived_at, b.owner_user_id,
+        u.full_name as owner_name, u.phone as owner_phone,
+        au.email as owner_email,
+        (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = b.id) as customers,
+        (select count(*)::int from public.transactions t where t.business_id = b.id) as transactions
+      from public.businesses b
+      left join public.users u on u.id = b.owner_user_id
+      left join auth.users au on au.id = b.owner_user_id
+      where b.archived_at is not null
+      order by b.archived_at desc
+    `),
+  ])
+  const businesses = activeResult.rows
+  const archivedBusinesses = archivedResult.rows
   return {
     businesses,
+    archivedBusinesses,
     totals: {
       businesses: businesses.length,
+      archivedBusinesses: archivedBusinesses.length,
       activePrograms: businesses.reduce((sum, business) => sum + business.active_programs, 0),
       customers: businesses.reduce((sum, business) => sum + business.customers, 0),
       transactions: businesses.reduce((sum, business) => sum + business.transactions, 0),

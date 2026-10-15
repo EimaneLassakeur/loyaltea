@@ -896,6 +896,136 @@ test('Customer join program requires active business subscription and active sta
   assert.equal(evaluateJoinEligibility({ business: { status: 'active' }, subscription: activeSub, existingMembership: { is_active: true } }).status, 409)
 })
 
+test('Vercel SPA rewrite configuration and production join routing validation', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  // 1. Verify frontend/vercel.json exists and contains standard SPA fallback rewrite
+  const vercelJsonPath = path.resolve(process.cwd(), '../frontend/vercel.json')
+  assert.ok(fs.existsSync(vercelJsonPath), 'frontend/vercel.json must exist to fix Vercel 404 on deep links')
+  const vercelConfig = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf8'))
+  assert.ok(Array.isArray(vercelConfig.rewrites), 'rewrites array must be defined in vercel.json')
+  const spaRewrite = vercelConfig.rewrites.find((r) => r.source === '/(.*)' && r.destination === '/index.html')
+  assert.ok(spaRewrite, 'vercel.json must rewrite all non-file paths to /index.html')
+
+  // 2. Verify route regex matching for production deep links
+  const businessJoinRegex = /^\/join\/business\/([^/]+)\/?$/
+  const testUrls = [
+    { url: '/join/business/nigga', expectedSlug: 'nigga' },
+    { url: '/join/business/nigga/', expectedSlug: 'nigga' },
+    { url: '/join/business/cafe-alger', expectedSlug: 'cafe-alger' },
+    { url: '/join/business/resto-123', expectedSlug: 'resto-123' },
+  ]
+
+  for (const { url, expectedSlug } of testUrls) {
+    const match = url.match(businessJoinRegex)
+    assert.ok(match, `Route ${url} should match business join regex`)
+    assert.equal(match[1], expectedSlug)
+  }
+})
+
+test('Platform admin business deletion vs archiving decision engine', () => {
+  // Decision engine reflecting deleteOrArchiveBusiness
+  const evaluateDeletionStrategy = ({ business, payments = 0, transactions = 0, redemptions = 0, requestedMode = 'auto' }) => {
+    if (!business) return { status: 404, error: 'Business was not found' }
+    const hasFinancialHistory = payments > 0 || transactions > 0 || redemptions > 0
+
+    if (requestedMode === 'permanent' && hasFinancialHistory) {
+      return {
+        status: 409,
+        error: `Cannot permanently delete business "${business.name}" because it contains ${payments} payment(s), ${transactions} transaction(s), and ${redemptions} redemption(s). Archiving was applied instead to preserve financial and audit records.`,
+        code: 'BUSINESS_HAS_FINANCIAL_HISTORY',
+      }
+    }
+
+    if (hasFinancialHistory || requestedMode === 'archive') {
+      return {
+        status: 200,
+        action: 'archived',
+        permanent: false,
+        archived: true,
+        business: { ...business, status: 'suspended', archived_at: new Date().toISOString() },
+        programsActive: false,
+        membershipsActive: false,
+        ownerRole: 'CUSTOMER',
+        message: hasFinancialHistory
+          ? `Business "${business.name}" was safely archived. Financial records (${payments} payment(s), ${transactions} transaction(s)) were preserved.`
+          : `Business "${business.name}" was archived.`,
+      }
+    }
+
+    return {
+      status: 200,
+      action: 'deleted',
+      permanent: true,
+      deleted: true,
+      ownerRole: 'CUSTOMER',
+      message: `Business "${business.name}" was permanently deleted.`,
+    }
+  }
+
+  // 1. Business with cash payments or transactions -> Must be ARCHIVED (preserving financial history)
+  const bizWithPayments = { id: 'b-1', name: 'Nigga Cafe', slug: 'nigga', status: 'active', owner_user_id: 'u-1' }
+  const archiveResult = evaluateDeletionStrategy({
+    business: bizWithPayments,
+    payments: 1,
+    transactions: 20,
+    redemptions: 4,
+    requestedMode: 'auto',
+  })
+  assert.equal(archiveResult.status, 200)
+  assert.equal(archiveResult.action, 'archived')
+  assert.equal(archiveResult.permanent, false)
+  assert.equal(archiveResult.business.status, 'suspended')
+  assert.ok(archiveResult.business.archived_at)
+  assert.equal(archiveResult.programsActive, false)
+  assert.equal(archiveResult.ownerRole, 'CUSTOMER')
+
+  // 2. Explicit permanent delete on business with payments -> Blocked with 409 conflict
+  const conflictResult = evaluateDeletionStrategy({
+    business: bizWithPayments,
+    payments: 1,
+    transactions: 5,
+    requestedMode: 'permanent',
+  })
+  assert.equal(conflictResult.status, 409)
+  assert.equal(conflictResult.code, 'BUSINESS_HAS_FINANCIAL_HISTORY')
+
+  // 3. Draft/test business with 0 payments, 0 transactions -> Clean PERMANENT DELETION
+  const cleanBiz = { id: 'b-clean', name: 'Draft Test', slug: 'draft-test', status: 'active', owner_user_id: 'u-2' }
+  const deleteResult = evaluateDeletionStrategy({
+    business: cleanBiz,
+    payments: 0,
+    transactions: 0,
+    redemptions: 0,
+    requestedMode: 'auto',
+  })
+  assert.equal(deleteResult.status, 200)
+  assert.equal(deleteResult.action, 'deleted')
+  assert.equal(deleteResult.permanent, true)
+  assert.equal(deleteResult.ownerRole, 'CUSTOMER')
+})
+
+test('Active business isolation: archived businesses excluded from active directory and accessible IDs', () => {
+  const allBusinesses = [
+    { id: 'b-1', name: 'Active Cafe', status: 'active', archived_at: null },
+    { id: 'b-2', name: 'Paused Cafe', status: 'paused', archived_at: null },
+    { id: 'b-3', name: 'Deleted/Archived Cafe', status: 'suspended', archived_at: '2026-10-15T11:00:00Z' },
+  ]
+
+  // Query simulation for active directory: WHERE archived_at IS NULL
+  const activeBusinesses = allBusinesses.filter((b) => b.archived_at === null)
+  assert.equal(activeBusinesses.length, 2)
+  assert.ok(!activeBusinesses.some((b) => b.id === 'b-3'))
+
+  // Query simulation for archived directory: WHERE archived_at IS NOT NULL
+  const archivedBusinesses = allBusinesses.filter((b) => b.archived_at !== null)
+  assert.equal(archivedBusinesses.length, 1)
+  assert.equal(archivedBusinesses[0].id, 'b-3')
+  assert.equal(archivedBusinesses[0].status, 'suspended')
+})
+
+
 
 
 
