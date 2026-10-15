@@ -24,7 +24,10 @@ export async function apiFetch(path, accessToken, options = {}) {
 
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new Error(payload.error || `Request failed with status ${response.status}`)
+      const err = new Error(payload.error || `Request failed with status ${response.status}`)
+      err.status = response.status
+      err.code = payload.code
+      throw err
     }
     return payload
   } catch (error) {
@@ -34,3 +37,4 @@ export async function apiFetch(path, accessToken, options = {}) {
     throw error
   }
 }
+

@@ -45,7 +45,7 @@ export const config = {
   databaseSslRejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true',
   databaseSsl: databaseUrl && databaseCa ? buildDatabaseSsl(databaseUrl, databaseCa) : null,
   nodeEnv: process.env.NODE_ENV || 'development',
-  publicSignupEnabled: process.env.PUBLIC_SIGNUP_ENABLED === 'true',
+  publicSignupEnabled: process.env.PUBLIC_SIGNUP_ENABLED !== 'false',
 }
 
 export function assertConfig() {

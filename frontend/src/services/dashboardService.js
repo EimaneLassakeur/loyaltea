@@ -44,6 +44,18 @@ export async function createReward(accessToken, payload) {
   return apiFetch('/api/rewards', accessToken, { method: 'POST', body: JSON.stringify(payload) })
 }
 
+export async function updateProgram(accessToken, programId, payload) {
+  return apiFetch(`/api/programs/${programId}`, accessToken, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export async function updateReward(accessToken, rewardId, payload) {
+  return apiFetch(`/api/rewards/${rewardId}`, accessToken, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export async function deleteReward(accessToken, rewardId) {
+  return apiFetch(`/api/rewards/${rewardId}`, accessToken, { method: 'DELETE' })
+}
+
 export async function getPublicProgram(programId) {
   return apiFetch(`/api/public/programs/${programId}`)
 }

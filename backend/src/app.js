@@ -5,11 +5,36 @@ import morgan from 'morgan'
 import { config } from './config.js'
 import apiRouter from './routes/api.js'
 
+export function parseAllowedOrigins(originString) {
+  if (!originString) return []
+  return originString
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+}
+
 export function createApp() {
   const app = express()
   app.disable('x-powered-by')
   app.use(helmet())
-  app.use(cors({ origin: config.frontendOrigin, credentials: false }))
+
+  const allowedOrigins = parseAllowedOrigins(config.frontendOrigin)
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true)
+        const normalized = origin.trim().replace(/\/+$/, '')
+        if (allowedOrigins.length === 0 || allowedOrigins.includes(normalized)) {
+          return callback(null, true)
+        }
+        if (config.nodeEnv === 'development' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) {
+          return callback(null, true)
+        }
+        return callback(null, false)
+      },
+      credentials: false,
+    })
+  )
   app.use(express.json({ limit: '100kb' }))
   app.use(morgan(config.nodeEnv === 'production' ? 'combined' : 'dev'))
 

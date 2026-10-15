@@ -53,6 +53,22 @@ export default function DashboardPage({ session, profile, onSignOut }) {
     refreshDashboard().catch((error) => setDataError(error.message)).finally(() => setLoading(false))
   }, [refreshDashboard])
 
+  useEffect(() => {
+    if (isMobileNavOpen) {
+      document.body.style.overflow = 'hidden'
+      const onKeyDown = (event) => {
+        if (event.key === 'Escape') setIsMobileNavOpen(false)
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => {
+        document.body.style.overflow = ''
+        window.removeEventListener('keydown', onKeyDown)
+      }
+    }
+    document.body.style.overflow = ''
+    return undefined
+  }, [isMobileNavOpen])
+
   const activities = (dashboard.transactions || []).slice(0, 8).map((txn) => {
     const customer = dashboard.customers.find((c) => c.id === txn.membership_id)
     const value = txn.stamps_delta || txn.points_delta
@@ -113,10 +129,40 @@ export default function DashboardPage({ session, profile, onSignOut }) {
     window.setTimeout(() => setNotice(''), 2800)
   }
 
-  const publicAppUrl = import.meta.env.VITE_PUBLIC_APP_URL?.trim() || ''
-  const publicAppUrlIsValid = /^https:\/\/[^/]+(?:\/[^/]*)?$/i.test(publicAppUrl) && !/localhost|127\.0\.0\.1/i.test(publicAppUrl)
-  const joinLink = publicAppUrlIsValid && dashboard.business?.slug && dashboard.program?.id ? `${publicAppUrl.replace(/\/$/, '')}/join/business/${encodeURIComponent(dashboard.business.slug)}` : ''
-  const joinLinkError = !dashboard.business?.slug ? t('businessLinkUnavailable') : !dashboard.program?.id ? t('programLinkUnavailable') : !publicAppUrlIsValid ? t('publicAppUrlUnavailable') : ''
+  const resolvePublicAppUrl = () => {
+    const configuredUrl = (import.meta.env.VITE_PUBLIC_APP_URL || '').trim()
+    if (import.meta.env.PROD && /localhost|127\.0\.0\.1/i.test(configuredUrl)) {
+      if (typeof window !== 'undefined' && window.location.origin && !/localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
+        return window.location.origin.replace(/\/$/, '')
+      }
+    }
+    if (configuredUrl) return configuredUrl.replace(/\/$/, '')
+    if (typeof window !== 'undefined' && window.location.origin) {
+      return window.location.origin.replace(/\/$/, '')
+    }
+    return ''
+  }
+
+  const appBaseUrl = resolvePublicAppUrl()
+  const publicAppUrlIsValid = Boolean(
+    appBaseUrl && (
+      /^https:\/\//i.test(appBaseUrl) ||
+      (!import.meta.env.PROD && /^https?:\/\//i.test(appBaseUrl))
+    )
+  )
+  const businessSlug = dashboard.business?.slug || businesses.find((b) => b.id === (dashboard.business?.id || selectedBusinessId))?.slug || ''
+  const hasProgram = Boolean(dashboard.program?.id)
+  const hasSlug = Boolean(businessSlug)
+  const joinLink = publicAppUrlIsValid && (hasSlug || hasProgram)
+    ? (hasSlug
+        ? `${appBaseUrl}/join/business/${encodeURIComponent(businessSlug)}`
+        : `${appBaseUrl}/join/${encodeURIComponent(dashboard.program.id)}`)
+    : ''
+  const joinLinkError = !hasSlug && !hasProgram
+    ? t('programUnavailable')
+    : !publicAppUrlIsValid
+      ? t('publicAppUrlUnavailable')
+      : ''
 
   const copyJoinLink = async () => {
     try {
@@ -129,20 +175,29 @@ export default function DashboardPage({ session, profile, onSignOut }) {
   }
 
   const downloadJoinQr = () => {
-    const svg = document.querySelector('.business-join-qr svg')
+    const svg = document.querySelector('.business-join-modal svg') || document.querySelector('.business-join-qr svg')
     if (!svg || !joinLink) return
     const source = new XMLSerializer().serializeToString(svg)
     const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${dashboard.business.slug}-loyaltea-qr.svg`
+    anchor.download = `${businessSlug || dashboard.business?.name || 'business'}-loyaltea-qr.svg`
     anchor.click()
     URL.revokeObjectURL(url)
   }
 
   if (loading) return <div className="app-state"><strong>{t('loadingWorkspace')}</strong></div>
-  if (dataError) return <div className="app-state"><strong>{t('couldNotLoadWorkspace')}</strong><p>{dataError}</p><button className="primary-button" onClick={() => { setDataError(''); setLoading(true); refreshDashboard().catch((error) => setDataError(error.message)).finally(() => setLoading(false)) }}>{t('tryAgain')}</button></div>
+  if (dataError) return (
+    <div className="app-state">
+      <strong>{t('couldNotLoadWorkspace')}</strong>
+      <p>{dataError}</p>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        <button className="primary-button" onClick={() => { setDataError(''); setLoading(true); refreshDashboard().catch((error) => setDataError(error.message)).finally(() => setLoading(false)) }}>{t('tryAgain')}</button>
+        <button className="text-button" onClick={onSignOut}>{t('signOut')}</button>
+      </div>
+    </div>
+  )
   if (!dashboard.business && profile?.role === 'BUSINESS_OWNER') return <OnboardingScreen accessToken={session.access_token} onComplete={refreshDashboard} />
   if (!dashboard.business) return <div className="app-state"><strong>{t('noWorkspace')}</strong><p>{t('noWorkspaceCopy')}</p><button className="text-button" onClick={onSignOut}>{t('signOut')}</button></div>
 
@@ -155,12 +210,20 @@ export default function DashboardPage({ session, profile, onSignOut }) {
         business={dashboard.business}
         businesses={businesses}
         selectedBusinessId={selectedBusinessId || dashboard.business?.id || ''}
-        onBusinessChange={(businessId) => { setDataError(''); setLoading(true); setSelectedBusinessId(businessId) }}
-          onSignOut={onSignOut}
+        onBusinessChange={(businessId) => { setDataError(''); setLoading(true); setSelectedBusinessId(businessId); setIsMobileNavOpen(false) }}
+        onSignOut={onSignOut}
         customerCount={dashboard.stats.customers}
         onClose={() => setIsMobileNavOpen(false)} 
         onNavigate={(page) => { setActivePage(page); setIsMobileNavOpen(false) }} 
       />
+      {isMobileNavOpen && (
+        <div
+          className="sidebar-backdrop"
+          role="presentation"
+          onClick={() => setIsMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <main className="main-content">
         <DashboardHeader 
           activePage={activePage} 
@@ -179,17 +242,23 @@ export default function DashboardPage({ session, profile, onSignOut }) {
             </div>
             <div className="heading-actions"><button className="primary-button" onClick={() => setJoinQrOpen(true)} disabled={!joinLink}><QrCode size={16} /> {t('showJoinQr')}</button><button className="secondary-button" onClick={copyJoinLink} disabled={!joinLink}><Sparkles size={16} /> {t('copyLink')}</button></div>
           </section>
-          <section className="panel business-join-card"><div className="panel-heading"><div><h2>{t('qrSectionTitle')}</h2><p>{t('qrSectionDescription')}</p></div><QrCode size={20} /></div><div className="business-join-content">{joinLink ? <div className="business-join-qr"><QRCodeSVG value={joinLink} size={156} includeMargin bgColor="#ffffff" fgColor="#203b36" /></div> : <div className="business-join-qr qr-unavailable"><QrCode size={42} /><span>{joinLinkError}</span></div>}<div className="business-join-copy"><strong>{dashboard.business.name}</strong><span>{dashboard.program?.name || t('programUnavailable')}</span><code>{joinLink || joinLinkError}</code><div className="qr-actions"><button className="secondary-button" onClick={copyJoinLink} disabled={!joinLink}>{t('copyCustomerJoinLink')}</button><button className="secondary-button" onClick={downloadJoinQr} disabled={!joinLink}>{t('downloadQr')}</button></div></div></div></section>
-          {activePage === 'Rewards' ? <RewardsPanel program={dashboard.program} /> : <>
+          {activePage === 'Rewards' ? (
+            <RewardsPanel
+              program={dashboard.program}
+              businessId={dashboard.business?.id}
+              accessToken={session.access_token}
+              onProgramUpdate={refreshDashboard}
+            />
+          ) : <>
             {(activePage === 'Overview' || activePage === 'Customers') && <EmployeeOperationsPanel accessToken={session.access_token} program={dashboard.program} onAddLoyalty={addLoyalty} onRedeem={redeemCustomerReward} />}
             <StatsGrid values={dashboard.stats} />
             {(activePage === 'Overview' || activePage === 'Analytics') && <section className="content-grid"><PerformancePanel period={period} onPeriodChange={setPeriod} performance={dashboard.performance} />{activePage === 'Overview' && <ActivityPanel activities={activities} />}</section>}
             {(activePage === 'Overview' || activePage === 'Customers') && <CustomersPanel customers={filteredCustomers} program={dashboard.program} search={search} onSearchChange={setSearch} earnAmount={earnAmount} onEarnAmountChange={setEarnAmount} busyMembership={busyMembership} onAddLoyalty={addLoyalty} onRedeem={redeemCustomerReward} />}
           </>}
           <footer className="page-footer">
-            <span><span className="status-indicator" /> API connected</span>
-            <span>{profile?.full_name || 'Workspace member'} · {profile?.role || 'Member'}</span>
-            <button className="text-button" onClick={onSignOut}>Sign out</button>
+            <span><span className="status-indicator" /> {t('apiConnected')}</span>
+            <span>{profile?.full_name || t('workspaceMember')} · {profile?.role || t('member')}</span>
+            <button className="text-button" onClick={onSignOut}>{t('signOut')}</button>
           </footer>
         </div>
       </main>

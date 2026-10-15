@@ -59,12 +59,54 @@ export function AuthProvider({ children }) {
         if (mounted) setLoading(false)
         return
       }
+
+      let currentSession = activeSession
+      const nowSeconds = Math.floor(Date.now() / 1000)
+      if (currentSession.expires_at && nowSeconds >= currentSession.expires_at - 60 && currentSession.refresh_token) {
+        try {
+          const refreshed = await apiFetch('/api/auth/refresh', null, {
+            method: 'POST',
+            body: JSON.stringify({ refreshToken: currentSession.refresh_token }),
+          })
+          if (refreshed?.session) {
+            currentSession = refreshed.session
+            localStorage.setItem(SESSION_KEY, JSON.stringify(currentSession))
+            if (mounted) setSession(currentSession)
+          }
+        } catch {
+          // If preemptive refresh fails, try using current token
+        }
+      }
+
       try {
-        const result = await apiFetch('/api/me', activeSession.access_token)
+        const result = await apiFetch('/api/me', currentSession.access_token)
         if (mounted) {
           setProfile({ ...result.profile, pendingSubscription: result.pendingSubscription || null })
+          setError('')
         }
       } catch (requestError) {
+        if (requestError?.status === 401 && currentSession.refresh_token) {
+          try {
+            const refreshed = await apiFetch('/api/auth/refresh', null, {
+              method: 'POST',
+              body: JSON.stringify({ refreshToken: currentSession.refresh_token }),
+            })
+            if (refreshed?.session) {
+              const newSession = refreshed.session
+              localStorage.setItem(SESSION_KEY, JSON.stringify(newSession))
+              if (mounted) setSession(newSession)
+              const retryResult = await apiFetch('/api/me', newSession.access_token)
+              if (mounted) {
+                setProfile({ ...retryResult.profile, pendingSubscription: retryResult.pendingSubscription || null })
+                setError('')
+              }
+              return
+            }
+          } catch {
+            // refresh token is invalid
+          }
+        }
+
         if (mounted) {
           localStorage.removeItem(SESSION_KEY)
           setSession(null)

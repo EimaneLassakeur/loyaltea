@@ -9,3 +9,5 @@
 .pending-subscription-summary strong { font-size: 15px; }
 .pending-subscription-actions { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
 @media (max-width: 520px) { .pending-subscription-card { padding: 28px 20px; } .pending-subscription-actions { align-items: stretch; flex-direction: column; } .pending-subscription-actions .primary-button { width: 100%; } }
+html[dir='rtl'] .pending-subscription-card { text-align: right; }
+html[dir='rtl'] .pending-subscription-card .preferences-controls { right: auto; left: 18px; }

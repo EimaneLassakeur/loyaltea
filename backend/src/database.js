@@ -92,7 +92,22 @@ export async function createBusinessProvisioning({ adminUserId, businessName, sl
     const existingSlug = await client.query('select 1 from public.businesses where slug = $1', [slug])
     if (existingSlug.rowCount) throw httpError(409, 'This business slug is already in use')
     await client.query('commit')
-    return { identity: { email: ownerEmail || undefined, phone: ownerPhone || undefined, password: ownerPassword, email_confirm: true, phone_confirm: true, user_metadata: { full_name: ownerFullName, role: 'BUSINESS_OWNER' } }, plan: planResult.rows[0], adminUserId, businessName, slug }
+    const fallbackEmail = ownerEmail || (ownerPhone ? `phone_${ownerPhone.replace(/\D/g, '')}@loyaltea.local` : undefined)
+    return {
+      identity: {
+        email: fallbackEmail,
+        phone: ownerPhone || undefined,
+        password: ownerPassword,
+        email_confirm: true,
+        phone_confirm: true,
+        user_metadata: { full_name: ownerFullName, role: 'BUSINESS_OWNER' },
+        app_metadata: { role: 'BUSINESS_OWNER' },
+      },
+      plan: planResult.rows[0],
+      adminUserId,
+      businessName,
+      slug,
+    }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
 }
 
@@ -100,6 +115,8 @@ export async function finishBusinessProvisioning({ ownerUserId, adminUserId, bus
   const client = await pool.connect()
   try {
     await client.query('begin')
+    await client.query("update public.users set role = 'BUSINESS_OWNER' where id = $1", [ownerUserId])
+    await client.query("delete from public.customers where id = $1", [ownerUserId])
     const userResult = await client.query("select id from public.users where id = $1 and role = 'BUSINESS_OWNER' for update", [ownerUserId])
     if (!userResult.rowCount) throw httpError(400, 'Owner profile was not created correctly')
     const existingBusiness = await client.query('select id from public.businesses where owner_user_id = $1', [ownerUserId])
@@ -107,6 +124,9 @@ export async function finishBusinessProvisioning({ ownerUserId, adminUserId, bus
     const businessResult = await client.query('insert into public.businesses (owner_user_id, name, slug) values ($1, $2, $3) returning id, name, slug, owner_user_id, created_at', [ownerUserId, businessName, slug])
     const subscriptionResult = await client.query(`insert into public.subscriptions (business_id, plan_id, starts_at, ends_at, status, created_by, updated_by) select $1, id, now(), now() + make_interval(days => duration_days), 'pending', $2, $2 from public.subscription_plans where id = $3 and is_active returning id, business_id, plan_id, starts_at, ends_at, status`, [businessResult.rows[0].id, adminUserId, planId])
     if (!subscriptionResult.rowCount) throw httpError(404, 'Subscription plan was not found or is inactive')
+    await client.query('insert into public.business_locations (business_id, name, is_active) values ($1, $2, true)', [businessResult.rows[0].id, `${businessName} Main`])
+    const programResult = await client.query('insert into public.loyalty_programs (business_id, name, model, is_active) values ($1, $2, $3, true) returning id', [businessResult.rows[0].id, `${businessName} Program`, 'STAMPS'])
+    await client.query('insert into public.rewards (program_id, name, description, required_stamps, is_active) values ($1, $2, $3, 10, true)', [programResult.rows[0].id, 'Free Reward', 'Claim 1 free reward after 10 stamps'])
     await client.query(`insert into public.audit_logs (actor_user_id, business_id, action, target_type, target_id, metadata) values ($1, $2, 'business.created', 'business', $2, $3)`, [adminUserId, businessResult.rows[0].id, JSON.stringify({ owner_user_id: ownerUserId, subscription_id: subscriptionResult.rows[0].id, plan_id: planId })])
     await client.query('commit')
     return { business: businessResult.rows[0], subscription: subscriptionResult.rows[0] }
@@ -157,12 +177,18 @@ export async function updateSubscriptionPlan({ actorUserId, planId, name, descri
 
 export async function getPlatformOverview() {
   const result = await pool.query(`
-    select b.id, b.name, b.slug, b.status, b.created_at,
+    select b.id, b.name, b.slug, b.status, b.created_at, b.owner_user_id,
+      u.full_name as owner_name, u.phone as owner_phone,
+      au.email as owner_email,
+      (select address from public.business_locations bl where bl.business_id = b.id and bl.is_active order by bl.created_at asc limit 1) as address,
       (select count(*)::int from public.loyalty_programs p where p.business_id = b.id and p.is_active) as active_programs,
       (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = b.id) as customers,
       (select count(*)::int from public.transactions t where t.business_id = b.id) as transactions,
       (select count(*)::int from public.reward_redemptions r where r.business_id = b.id) as redemptions
-    from public.businesses b order by b.created_at desc
+    from public.businesses b
+    left join public.users u on u.id = b.owner_user_id
+    left join auth.users au on au.id = b.owner_user_id
+    order by b.created_at desc
   `)
   const businesses = result.rows
   return {
