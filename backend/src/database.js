@@ -55,13 +55,25 @@ export async function getBusinessPerformance(businessId, days = 30) {
       select generate_series(current_date - ($2::int - 1), current_date, interval '1 day')::date as day
     )
     select
-      d.day,
+      to_char(d.day, 'YYYY-MM-DD') as day,
       (select count(*)::int from public.customer_memberships m join public.loyalty_programs p on p.id = m.program_id where p.business_id = $1 and m.joined_at >= d.day and m.joined_at < d.day + interval '1 day') as new_members,
       (select coalesce(sum(abs(t.stamps_delta) + abs(t.points_delta)), 0)::int from public.transactions t where t.business_id = $1 and t.type = 'EARN' and t.created_at >= d.day and t.created_at < d.day + interval '1 day') as loyalty_issued
     from days d
     order by d.day
   `, [businessId, safeDays])
-  return result.rows.map((row) => ({ date: row.day, newMembers: row.new_members, loyaltyIssued: row.loyalty_issued }))
+  return result.rows.map((row) => {
+    let dateStr = row.day
+    if (dateStr instanceof Date) {
+      dateStr = dateStr.toISOString().slice(0, 10)
+    } else if (typeof dateStr === 'string' && dateStr.includes('T')) {
+      dateStr = dateStr.slice(0, 10)
+    }
+    return {
+      date: dateStr,
+      newMembers: row.new_members,
+      loyaltyIssued: row.loyalty_issued,
+    }
+  })
 }
 
 export async function getPendingBusinessSubscription(userId) {
