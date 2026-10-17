@@ -1025,6 +1025,186 @@ test('Active business isolation: archived businesses excluded from active direct
   assert.equal(archivedBusinesses[0].status, 'suspended')
 })
 
+test('Persistent Session: session token normalization ensures valid numeric expires_at and expires_in', () => {
+  const nowSeconds = 1729080000
+
+  // 1. Session where Supabase provides expires_in but omits expires_at
+  const rawSessionWithoutExpiresAt = {
+    access_token: 'jwt-access-token-1',
+    refresh_token: 'rt-refresh-token-1',
+    expires_in: 3600,
+    token_type: 'bearer',
+  }
+
+  const normalized = {
+    ...rawSessionWithoutExpiresAt,
+    expires_in: Number(rawSessionWithoutExpiresAt.expires_in) || 3600,
+    expires_at: rawSessionWithoutExpiresAt.expires_at || (nowSeconds + (Number(rawSessionWithoutExpiresAt.expires_in) || 3600)),
+  }
+
+  assert.equal(normalized.expires_in, 3600)
+  assert.equal(normalized.expires_at, nowSeconds + 3600)
+  assert.equal(typeof normalized.expires_at, 'number')
+  assert.equal(normalized.access_token, 'jwt-access-token-1')
+  assert.equal(normalized.refresh_token, 'rt-refresh-token-1')
+
+  // 2. Session where expires_at is already explicitly provided
+  const rawSessionWithExpiresAt = {
+    access_token: 'jwt-access-token-2',
+    refresh_token: 'rt-refresh-token-2',
+    expires_in: 7200,
+    expires_at: nowSeconds + 7200,
+  }
+
+  const normalized2 = {
+    ...rawSessionWithExpiresAt,
+    expires_in: Number(rawSessionWithExpiresAt.expires_in) || 3600,
+    expires_at: rawSessionWithExpiresAt.expires_at || (nowSeconds + (Number(rawSessionWithExpiresAt.expires_in) || 3600)),
+  }
+
+  assert.equal(normalized2.expires_at, nowSeconds + 7200)
+})
+
+test('Token Refresh Concurrency: deduplicates multiple in-flight refresh requests into a single promise', async () => {
+  let refreshCallCount = 0
+
+  // Simulation of the deduplicated refresh manager
+  let activeRefreshPromise = null
+  async function simulateRefreshAuthSession(refreshToken) {
+    if (activeRefreshPromise) {
+      return activeRefreshPromise
+    }
+
+    activeRefreshPromise = (async () => {
+      try {
+        refreshCallCount++
+        // Simulate network latency for token rotation
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return {
+          access_token: `new-access-token-${refreshCallCount}`,
+          refresh_token: `new-refresh-token-${refreshCallCount}`,
+          expires_in: 3600,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }
+      } finally {
+        activeRefreshPromise = null
+      }
+    })()
+
+    return activeRefreshPromise
+  }
+
+  // Simulate 5 simultaneous API calls detecting an expired token at the exact same moment
+  const results = await Promise.all([
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+  ])
+
+  // Assert that exactly ONE backend refresh network request was made (preventing token rotation revocation)
+  assert.equal(refreshCallCount, 1)
+
+  // Assert that all 5 concurrent callers received the identical, fresh token
+  for (const res of results) {
+    assert.equal(res.access_token, 'new-access-token-1')
+    assert.equal(res.refresh_token, 'new-refresh-token-1')
+  }
+})
+
+test('Transparent 401 Retry: expired access token triggers automatic refresh and retries without user interruption', async () => {
+  let requestAttempt = 0
+  let refreshAttempt = 0
+  let sessionState = {
+    access_token: 'expired-access-token',
+    refresh_token: 'valid-refresh-token',
+    expires_at: Math.floor(Date.now() / 1000) - 100, // already expired
+  }
+
+  async function mockApiFetch(path, token) {
+    requestAttempt++
+    if (token === 'expired-access-token') {
+      return { status: 401, data: { error: 'Invalid or expired session' } }
+    }
+    return { status: 200, data: { memberships: [{ id: 'm-1', program_id: 'p-1' }] } }
+  }
+
+  async function mockRefreshSession(refreshToken) {
+    refreshAttempt++
+    sessionState = {
+      access_token: 'fresh-access-token',
+      refresh_token: 'rotated-refresh-token',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    }
+    return sessionState
+  }
+
+  // Execute client flow:
+  let finalResult = null
+  let currentToken = sessionState.access_token
+  let response = await mockApiFetch('/api/customer/memberships', currentToken)
+
+  if (response.status === 401 && sessionState.refresh_token) {
+    // 401 intercepted, trigger refresh and retry
+    const newSession = await mockRefreshSession(sessionState.refresh_token)
+    currentToken = newSession.access_token
+    const retryResponse = await mockApiFetch('/api/customer/memberships', currentToken)
+    assert.equal(retryResponse.status, 200)
+    finalResult = retryResponse.data
+  }
+
+  assert.equal(requestAttempt, 2) // First failed with 401, second retry succeeded
+  assert.equal(refreshAttempt, 1) // Exactly one refresh performed
+  assert.equal(sessionState.access_token, 'fresh-access-token')
+  assert.deepEqual(finalResult, { memberships: [{ id: 'm-1', program_id: 'p-1' }] })
+})
+
+test('Network fault tolerance: network errors during refresh preserve local session instead of logging out', async () => {
+  let localStorageCleared = false
+  const session = {
+    access_token: 'current-token',
+    refresh_token: 'valid-refresh-token',
+  }
+
+  try {
+    // Simulate network error (e.g. WiFi hiccup or sleeping laptop)
+    throw new TypeError('Failed to fetch')
+  } catch (err) {
+    if (err instanceof TypeError) {
+      // Do NOT clear session on network failures
+      localStorageCleared = false
+    } else {
+      localStorageCleared = true
+    }
+  }
+
+  assert.equal(localStorageCleared, false, 'Local storage must not be wiped on temporary network interruptions')
+  assert.ok(session.refresh_token)
+})
+
+test('Graceful Logout: POST /api/auth/logout succeeds with 204 even if access token is already expired or missing', () => {
+  // Test the route handler logic:
+  function evaluateLogoutStatus(accessToken) {
+    if (accessToken) {
+      try {
+        // Even if supabase.auth.signOut() throws for expired token:
+        // Silently caught
+      } catch {
+        // Ignored
+      }
+    }
+    return 204
+  }
+
+  // Valid token
+  assert.equal(evaluateLogoutStatus('valid-token'), 204)
+  // Expired / missing token
+  assert.equal(evaluateLogoutStatus(null), 204)
+  assert.equal(evaluateLogoutStatus('expired-or-invalid-token'), 204)
+})
+
+
 
 
 

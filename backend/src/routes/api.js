@@ -11,6 +11,7 @@ const router = Router()
 const staffRoles = ['BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'PLATFORM_ADMIN']
 const managerRoles = ['BUSINESS_OWNER', 'MANAGER', 'PLATFORM_ADMIN']
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many authentication attempts. Try again later.' } })
+const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many session refresh attempts. Try again shortly.', code: 'RATE_LIMIT_EXCEEDED' } })
 const loyaltyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many loyalty requests. Try again shortly.' } })
 const publicLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Try again shortly.' } })
 
@@ -46,7 +47,13 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
             password,
           })
           if (!bridged.error && bridged.data?.session) {
-            return response.json({ session: bridged.data.session, user: bridged.data.user })
+            const expiresIn = Number(bridged.data.session.expires_in) || 3600
+            const session = {
+              ...bridged.data.session,
+              expires_in: expiresIn,
+              expires_at: bridged.data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+            }
+            return response.json({ session, user: bridged.data.user })
           }
           if (bridged.error) {
             return response.status(401).json({ error: 'Invalid login credentials', code: 'INVALID_CREDENTIALS' })
@@ -59,7 +66,13 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
       }
       return response.status(401).json({ error: error.message, code: error.code || 'INVALID_CREDENTIALS' })
     }
-    return response.json({ session: data.session, user: data.user })
+    const expiresIn = Number(data.session.expires_in) || 3600
+    const session = {
+      ...data.session,
+      expires_in: expiresIn,
+      expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+    }
+    return response.json({ session, user: data.user })
   } catch (error) {
     return next(error)
   }
@@ -124,7 +137,12 @@ router.post('/auth/signup', authLimiter, async (request, response, next) => {
                 code: 'USER_ALREADY_EXISTS',
               })
             }
-            return response.status(201).json({ session: fallbackRes.data.session, user: fallbackRes.data.user, confirmationRequired: !fallbackRes.data.session })
+            const session = fallbackRes.data.session ? {
+              ...fallbackRes.data.session,
+              expires_in: Number(fallbackRes.data.session.expires_in) || 3600,
+              expires_at: fallbackRes.data.session.expires_at || Math.floor(Date.now() / 1000) + (Number(fallbackRes.data.session.expires_in) || 3600),
+            } : null
+            return response.status(201).json({ session, user: fallbackRes.data.user, confirmationRequired: !session })
           }
           return response.status(400).json({ error: error.message, code: error.code })
         }
@@ -134,7 +152,12 @@ router.post('/auth/signup', authLimiter, async (request, response, next) => {
             code: 'USER_ALREADY_EXISTS',
           })
         }
-        return response.status(201).json({ session: data.session, user: data.user, confirmationRequired: !data.session })
+        const session = data.session ? {
+          ...data.session,
+          expires_in: Number(data.session.expires_in) || 3600,
+          expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + (Number(data.session.expires_in) || 3600),
+        } : null
+        return response.status(201).json({ session, user: data.user, confirmationRequired: !session })
       }
       return response.status(400).json({ error: 'A valid email address or phone number is required' })
     }
@@ -158,28 +181,46 @@ router.post('/auth/signup', authLimiter, async (request, response, next) => {
         code: 'USER_ALREADY_EXISTS',
       })
     }
-    return response.status(201).json({ session: data.session, user: data.user, confirmationRequired: !data.session })
+    const session = data.session ? {
+      ...data.session,
+      expires_in: Number(data.session.expires_in) || 3600,
+      expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + (Number(data.session.expires_in) || 3600),
+    } : null
+    return response.status(201).json({ session, user: data.user, confirmationRequired: !session })
   } catch (error) {
     return next(error)
   }
 })
 
-router.post('/auth/refresh', authLimiter, async (request, response, next) => {
+router.post('/auth/refresh', refreshLimiter, async (request, response, next) => {
   try {
     const { refreshToken } = request.body || {}
-    if (!refreshToken || typeof refreshToken !== 'string') return response.status(400).json({ error: 'refreshToken is required' })
+    if (!refreshToken || typeof refreshToken !== 'string') return response.status(400).json({ error: 'refreshToken is required', code: 'MISSING_REFRESH_TOKEN' })
     const { data, error } = await createAuthClient().auth.refreshSession({ refresh_token: refreshToken })
-    if (error || !data.session) return response.status(401).json({ error: 'Refresh token is invalid or expired' })
-    return response.json({ session: data.session, user: data.user })
+    if (error || !data.session) return response.status(401).json({ error: error?.message || 'Refresh token is invalid or expired', code: error?.code || 'INVALID_REFRESH_TOKEN' })
+    const expiresIn = Number(data.session.expires_in) || 3600
+    const session = {
+      ...data.session,
+      expires_in: expiresIn,
+      expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+    }
+    return response.json({ session, user: data.user })
   } catch (error) {
     return next(error)
   }
 })
 
-router.post('/auth/logout', requireAuth, async (request, response, next) => {
+router.post('/auth/logout', async (request, response, next) => {
   try {
-    const { error } = await createUserClient(request.accessToken).auth.signOut()
-    if (error && !/session not found|already signed out/i.test(error.message)) return next(error)
+    const authorization = request.get('authorization')
+    const accessToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : null
+    if (accessToken) {
+      try {
+        await createUserClient(accessToken).auth.signOut()
+      } catch {
+        // Silently ignore if token is already expired or already signed out
+      }
+    }
     return response.status(204).end()
   } catch (error) {
     return next(error)

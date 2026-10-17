@@ -18,9 +18,24 @@ export default function App() {
   if (businessJoinMatch) return <JoinScreen businessSlug={businessJoinMatch[1]} session={session} profile={profile} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
   if (legacyProgramJoinMatch) return <JoinScreen programId={legacyProgramJoinMatch[1]} session={session} profile={profile} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
   if (!session) return <AuthScreen onSignIn={signIn} onSignUp={signUp} onClearError={clearError} error={error} />
-  if (profile?.role === 'PLATFORM_ADMIN') return <PlatformAdminScreen session={session} profile={profile} onSignOut={signOut} />
-  if (profile?.role === 'BUSINESS_OWNER' && profile.pendingSubscription && profile.pendingSubscription.status !== 'active') return <PendingSubscriptionScreen subscription={profile.pendingSubscription} onRefresh={() => window.location.reload()} onSignOut={signOut} />
-  if (profile?.role === 'CUSTOMER') return <CustomerPage session={session} profile={profile} onSignOut={signOut} />
+  if (!profile) {
+    return (
+      <div className="app-state">
+        <p className="form-message">{error || t('couldNotLoadProfile', 'Could not load your account profile')}</p>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+          <button className="primary-button" onClick={() => window.location.reload()}>
+            {t('tryAgain', 'Try again')}
+          </button>
+          <button className="secondary-button" onClick={signOut}>
+            {t('signOut', 'Sign out')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+  if (profile.role === 'PLATFORM_ADMIN') return <PlatformAdminScreen session={session} profile={profile} onSignOut={signOut} />
+  if (profile.role === 'BUSINESS_OWNER' && profile.pendingSubscription && profile.pendingSubscription.status !== 'active') return <PendingSubscriptionScreen subscription={profile.pendingSubscription} onRefresh={() => window.location.reload()} onSignOut={signOut} />
+  if (profile.role === 'CUSTOMER') return <CustomerPage session={session} profile={profile} onSignOut={signOut} />
   return <DashboardPage session={session} profile={profile} onSignOut={signOut} />
 }
 
