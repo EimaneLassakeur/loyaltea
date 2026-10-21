@@ -8,8 +8,32 @@ function buildPath(points, key, maximum) {
   }).join(' ')
 }
 
-function labelForDate(value, language) {
-  return new Date(`${value}T00:00:00`).toLocaleDateString(language, { month: 'short', day: '2-digit' })
+function parseLocalDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value
+  if (typeof value === 'number') {
+    const d = new Date(value)
+    return isNaN(d.getTime()) ? null : d
+  }
+  const str = String(value).trim()
+  const dateMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (dateMatch) {
+    const [, y, m, d] = dateMatch
+    return new Date(Number(y), Number(m) - 1, Number(d))
+  }
+  const parsed = new Date(str)
+  return isNaN(parsed.getTime()) ? null : parsed
+}
+
+function labelForDate(value, language, period) {
+  const d = parseLocalDate(value)
+  if (!d) return ''
+  const is365 = String(period) === '365'
+  return d.toLocaleDateString(language || 'en', {
+    month: 'short',
+    day: '2-digit',
+    ...(is365 ? { year: '2-digit' } : {}),
+  })
 }
 
 export default function PerformancePanel({ period, onPeriodChange, performance }) {
@@ -53,7 +77,11 @@ export default function PerformancePanel({ period, onPeriodChange, performance }
               <path className="chart-line blue-line" d={buildPath(points, 'loyaltyIssued', maximum)} />
             </svg>
             <div className="chart-x-axis">
-              {labels.map((point) => <span key={point.date}>{labelForDate(point.date, language)}</span>)}
+              {labels.map((point, index) => (
+                <span key={point.date || index}>
+                  {labelForDate(point.date, language, period)}
+                </span>
+              ))}
             </div>
           </div>
         </div>

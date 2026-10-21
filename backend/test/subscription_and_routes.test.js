@@ -1204,6 +1204,87 @@ test('Graceful Logout: POST /api/auth/logout succeeds with 204 even if access to
   assert.equal(evaluateLogoutStatus('expired-or-invalid-token'), 204)
 })
 
+test('Performance Chart: date parsing and label formatting shows real calendar date instead of Invalid Date', () => {
+  function parseLocalDate(value) {
+    if (!value) return null
+    if (value instanceof Date) return isNaN(value.getTime()) ? null : value
+    if (typeof value === 'number') {
+      const d = new Date(value)
+      return isNaN(d.getTime()) ? null : d
+    }
+    const str = String(value).trim()
+    const dateMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (dateMatch) {
+      const [, y, m, d] = dateMatch
+      return new Date(Number(y), Number(m) - 1, Number(d))
+    }
+    const parsed = new Date(str)
+    return isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  function labelForDate(value, language, period) {
+    const d = parseLocalDate(value)
+    if (!d) return ''
+    const is365 = String(period) === '365'
+    return d.toLocaleDateString(language || 'en', {
+      month: 'short',
+      day: '2-digit',
+      ...(is365 ? { year: '2-digit' } : {}),
+    })
+  }
+
+  // 1. ISO string with time and Z (which previously caused "Invalid Date")
+  const isoDate = '2026-10-17T00:00:00.000Z'
+  const labelEn = labelForDate(isoDate, 'en', '30')
+  assert.notEqual(labelEn, 'Invalid Date')
+  assert.ok(labelEn.includes('17'))
+  assert.ok(labelEn.toLowerCase().includes('oct'))
+
+  // 2. Standard calendar date string (YYYY-MM-DD)
+  const plainDate = '2026-10-17'
+  const plainLabelEn = labelForDate(plainDate, 'en', '30')
+  assert.notEqual(plainLabelEn, 'Invalid Date')
+  assert.equal(plainLabelEn, labelEn)
+
+  // 3. Multi-language support (French and Arabic)
+  const labelFr = labelForDate(isoDate, 'fr', '30')
+  assert.notEqual(labelFr, 'Invalid Date')
+  assert.ok(labelFr.includes('17'))
+  assert.ok(labelFr.toLowerCase().includes('oct'))
+
+  const labelAr = labelForDate(isoDate, 'ar', '30')
+  assert.notEqual(labelAr, 'Invalid Date')
+
+  // 4. 365-day period includes year
+  const label365 = labelForDate(isoDate, 'en', '365')
+  assert.notEqual(label365, 'Invalid Date')
+  assert.ok(label365.includes('26') || label365.includes('2026'))
+
+  // 5. Database performance row normalization
+  const mockRowDateObj = { day: new Date('2026-10-17T00:00:00.000Z'), new_members: 3, loyalty_issued: 50 }
+  const mockRowText = { day: '2026-10-17', new_members: 1, loyalty_issued: 10 }
+
+  function normalizePerformanceRow(row) {
+    let dateStr = row.day
+    if (dateStr instanceof Date) {
+      dateStr = dateStr.toISOString().slice(0, 10)
+    } else if (typeof dateStr === 'string' && dateStr.includes('T')) {
+      dateStr = dateStr.slice(0, 10)
+    }
+    return {
+      date: dateStr,
+      newMembers: row.new_members,
+      loyaltyIssued: row.loyalty_issued,
+    }
+  }
+
+  assert.equal(normalizePerformanceRow(mockRowDateObj).date, '2026-10-17')
+  assert.equal(normalizePerformanceRow(mockRowText).date, '2026-10-17')
+})
+
+
+
+
 
 
 
