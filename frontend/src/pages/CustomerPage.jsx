@@ -344,7 +344,17 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                   {/* Header: Prominent Business Name & Loyalty Model Badge */}
                   <div className="membership-card-header">
                     <div className="membership-brand-info">
-                      <h2 className="membership-business-title">{businessName}</h2>
+                      <div className="membership-brand-title-wrap">
+                        {program.businesses?.logo_url && (
+                          <img
+                            src={program.businesses.logo_url}
+                            alt=""
+                            className="membership-business-logo"
+                            loading="lazy"
+                          />
+                        )}
+                        <h2 className="membership-business-title">{businessName}</h2>
+                      </div>
                       <p className="membership-program-subtitle">{program.name || t('loyaltyProgram', 'Loyalty Program')}</p>
                     </div>
                     <div className="membership-meta-badges">

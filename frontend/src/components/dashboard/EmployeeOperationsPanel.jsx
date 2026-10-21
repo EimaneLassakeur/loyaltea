@@ -32,10 +32,12 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
       const result = await lookupMembership(accessToken, normalized)
       const membership = result.membership
       const balance = membership.loyalty_programs?.model === 'POINTS' ? membership.points_balance : membership.stamps_balance
+      const customerName = membership.users?.full_name || membership.customers?.full_name || membership.customers?.email || t('customer')
+      const customerContact = membership.customers?.email || membership.users?.phone || membership.customers?.phone || ''
       setCustomer({
         id: membership.id,
-        name: membership.customers?.email || t('customer'),
-        email: membership.customers?.email || '',
+        name: customerName,
+        email: customerContact,
         stamps: balance,
         unit: membership.loyalty_programs?.model === 'POINTS' ? t('points') : t('stamps'),
       })

@@ -2477,6 +2477,34 @@ html[dir='rtl'] .detail-value {
   gap: 8px;
   padding: 0 18px;
 }
+.activity-end-of-history {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 10px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.activity-end-of-history span {
+  position: relative;
+  display: inline-block;
+  padding: 0 12px;
+}
+.activity-end-of-history span::before,
+.activity-end-of-history span::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 20px;
+  height: 1px;
+  background-color: var(--line);
+}
+.activity-end-of-history span::before {
+  right: 100%;
+}
+.activity-end-of-history span::after {
+  left: 100%;
+}
 .activity-error-banner {
   display: flex;
   align-items: center;
@@ -2515,6 +2543,20 @@ html[dir='rtl'] .detail-value {
 }
 .membership-card-inner {
   padding-top: 4px;
+}
+.membership-brand-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.membership-business-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 .membership-business-title {
   font-size: 18px;

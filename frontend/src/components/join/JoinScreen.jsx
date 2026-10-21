@@ -297,6 +297,16 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
               </div>
             )}
 
+            {joined && (
+              <div className="join-balance-preview" style={{ margin: '8px 0 12px', textAlign: 'center' }}>
+                <span style={{ fontSize: '13px', color: 'var(--muted)' }}>{t('currentBalance', 'Current Balance')}:</span>{' '}
+                <strong style={{ fontSize: '15px', color: 'var(--ink)' }}>
+                  {program.model === 'POINTS' ? (joined.points_balance || 0) : (joined.stamps_balance || 0)}{' '}
+                  {program.model === 'POINTS' ? t('points', 'points') : t('stamps', 'stamps')}
+                </strong>
+              </div>
+            )}
+
             <button
               type="button"
               className="primary-button"

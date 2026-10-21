@@ -594,14 +594,57 @@ router.post('/admin/subscriptions/expire', requireRoles('PLATFORM_ADMIN'), async
 router.get('/loyalty/lookup/:secureToken', requireRoles(...staffRoles), async (request, response, next) => {
   try {
     if (!isUuid(request.params.secureToken)) return response.status(400).json({ error: 'Invalid membership token' })
-    const { data, error } = await request.supabase
-      .from('customer_memberships')
-      .select('id, stamps_balance, points_balance, is_active, loyalty_programs(id, name, model, business_id, businesses(name)), customers(email)')
-      .eq('secure_token', request.params.secureToken)
-      .maybeSingle()
-    if (error) return next(error)
-    if (!data || !request.businessIds.includes(data.loyalty_programs?.business_id)) return response.status(404).json({ error: 'Membership not found' })
-    return response.json({ membership: data })
+    const result = await pool.query(`
+      SELECT 
+        m.id,
+        m.customer_id,
+        m.stamps_balance,
+        m.points_balance,
+        m.is_active,
+        p.id as program_id,
+        p.name as program_name,
+        p.model as program_model,
+        p.business_id,
+        b.name as business_name,
+        u.full_name as customer_name,
+        u.phone as customer_phone,
+        c.email as customer_email
+      FROM public.customer_memberships m
+      JOIN public.loyalty_programs p ON p.id = m.program_id
+      JOIN public.businesses b ON b.id = p.business_id
+      LEFT JOIN public.users u ON u.id = m.customer_id
+      LEFT JOIN public.customers c ON c.id = m.customer_id
+      WHERE m.secure_token = $1
+      LIMIT 1
+    `, [request.params.secureToken])
+    if (!result.rowCount) return response.status(404).json({ error: 'Membership not found' })
+    const row = result.rows[0]
+    if (!request.businessIds.includes(row.business_id)) return response.status(403).json({ error: 'Membership access denied' })
+    return response.json({
+      membership: {
+        id: row.id,
+        customer_id: row.customer_id,
+        stamps_balance: row.stamps_balance,
+        points_balance: row.points_balance,
+        is_active: row.is_active,
+        loyalty_programs: {
+          id: row.program_id,
+          name: row.program_name,
+          model: row.program_model,
+          business_id: row.business_id,
+          businesses: { name: row.business_name },
+        },
+        customers: {
+          email: row.customer_email || row.customer_phone,
+          full_name: row.customer_name,
+          phone: row.customer_phone,
+        },
+        users: {
+          full_name: row.customer_name,
+          phone: row.customer_phone,
+        },
+      },
+    })
   } catch (error) {
     return next(error)
   }

@@ -43,6 +43,8 @@ const translations = {
     collectPointsForOffer: 'Earn points with each purchase to unlock this reward',
     noAccountSignUp: "Don't have an account? Sign up",
     alreadyHaveAccountSignIn: 'Already have an account? Sign in',
+    allActivitiesLoaded: 'All activities loaded',
+    currentBalance: 'Current Balance',
     // Auth & Onboarding
     signIn: 'Sign in',
     signUp: 'Create account',
@@ -448,6 +450,8 @@ const translations = {
     collectPointsForOffer: 'Gagnez des points à chaque achat pour débloquer cette récompense',
     noAccountSignUp: "Vous n'avez pas de compte ? S'inscrire",
     alreadyHaveAccountSignIn: 'Vous avez déjà un compte ? Se connecter',
+    allActivitiesLoaded: 'Toutes les activités ont été chargées',
+    currentBalance: 'Solde actuel',
     // Auth & Onboarding
     signIn: 'Se connecter',
     signUp: 'Créer un compte',
@@ -854,6 +858,8 @@ const translations = {
     collectPointsForOffer: 'اكسب نقاطاً مع كل عملية شراء لفتح هذه المكافأة',
     noAccountSignUp: 'ليس لديك حساب؟ إنشاء حساب',
     alreadyHaveAccountSignIn: 'لديك حساب بالفعل؟ تسجيل الدخول',
+    allActivitiesLoaded: 'تم تحميل جميع العمليات',
+    currentBalance: 'الرصيد الحالي',
     // Auth & Onboarding
     signIn: 'تسجيل الدخول',
     signUp: 'إنشاء حساب',

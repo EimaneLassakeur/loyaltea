@@ -249,7 +249,7 @@ export default function ActivityLogSection({
                 )
               })}
 
-              {hasMore && (
+              {hasMore ? (
                 <div className="activity-load-more-row">
                   <button
                     type="button"
@@ -272,7 +272,11 @@ export default function ActivityLogSection({
                     )}
                   </button>
                 </div>
-              )}
+              ) : activities.length > 0 ? (
+                <div className="activity-end-of-history">
+                  <span>{t('allActivitiesLoaded', 'All activities loaded')}</span>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
