@@ -11,6 +11,7 @@ const router = Router()
 const staffRoles = ['BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'PLATFORM_ADMIN']
 const managerRoles = ['BUSINESS_OWNER', 'MANAGER', 'PLATFORM_ADMIN']
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many authentication attempts. Try again later.' } })
+const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many session refresh attempts. Try again shortly.', code: 'RATE_LIMIT_EXCEEDED' } })
 const loyaltyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many loyalty requests. Try again shortly.' } })
 const publicLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Try again shortly.' } })
 
@@ -46,7 +47,13 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
             password,
           })
           if (!bridged.error && bridged.data?.session) {
-            return response.json({ session: bridged.data.session, user: bridged.data.user })
+            const expiresIn = Number(bridged.data.session.expires_in) || 3600
+            const session = {
+              ...bridged.data.session,
+              expires_in: expiresIn,
+              expires_at: bridged.data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+            }
+            return response.json({ session, user: bridged.data.user })
           }
           if (bridged.error) {
             return response.status(401).json({ error: 'Invalid login credentials', code: 'INVALID_CREDENTIALS' })
@@ -59,7 +66,13 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
       }
       return response.status(401).json({ error: error.message, code: error.code || 'INVALID_CREDENTIALS' })
     }
-    return response.json({ session: data.session, user: data.user })
+    const expiresIn = Number(data.session.expires_in) || 3600
+    const session = {
+      ...data.session,
+      expires_in: expiresIn,
+      expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+    }
+    return response.json({ session, user: data.user })
   } catch (error) {
     return next(error)
   }
@@ -76,6 +89,9 @@ router.post('/auth/signup', authLimiter, async (request, response, next) => {
     }
     if (typeof fullName !== 'string' || !fullName.trim()) {
       return response.status(400).json({ error: 'Full name is required' })
+    }
+    if (!normalizedPhone && !normalizedEmail) {
+      return response.status(400).json({ error: 'A valid phone number is required' })
     }
     if (role && role !== 'CUSTOMER') {
       return response.status(403).json({
@@ -95,91 +111,112 @@ router.post('/auth/signup', authLimiter, async (request, response, next) => {
       }
     }
 
-    if (!normalizedEmail) {
-      if (normalizedPhone) {
-        const { data, error } = await createAuthClient().auth.signUp({
-          phone: normalizedPhone,
-          password,
-          options: {
-            data: { full_name: fullName.trim(), role: 'CUSTOMER' },
-          },
+    if (normalizedEmail) {
+      const existingEmail = await pool.query('select id from auth.users where lower(email) = lower($1) limit 1', [normalizedEmail])
+      if (existingEmail.rowCount > 0) {
+        return response.status(409).json({
+          error: 'An account with this email address already exists. Please sign in instead.',
+          code: 'USER_ALREADY_EXISTS',
         })
-        if (error) {
-          if (error.code === 'phone_provider_disabled' || /phone.*disabled/i.test(error.message)) {
-            const rawDigits = normalizedPhone.replace(/\D/g, '')
-            const fallbackEmail = `phone_${rawDigits}@loyaltea.local`
-            const fallbackRes = await createAuthClient().auth.signUp({
-              email: fallbackEmail,
-              password,
-              options: {
-                data: { full_name: fullName.trim(), role: 'CUSTOMER', phone: normalizedPhone },
-              },
-            })
-            if (fallbackRes.error) {
-              return response.status(400).json({ error: fallbackRes.error.message, code: fallbackRes.error.code })
-            }
-            if (fallbackRes.data.user && Array.isArray(fallbackRes.data.user.identities) && fallbackRes.data.user.identities.length === 0) {
-              return response.status(409).json({
-                error: 'An account with this phone number already exists. Please sign in instead.',
-                code: 'USER_ALREADY_EXISTS',
-              })
-            }
-            return response.status(201).json({ session: fallbackRes.data.session, user: fallbackRes.data.user, confirmationRequired: !fallbackRes.data.session })
-          }
-          return response.status(400).json({ error: error.message, code: error.code })
-        }
-        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-          return response.status(409).json({
-            error: 'An account with this phone number already exists. Please sign in instead.',
-            code: 'USER_ALREADY_EXISTS',
-          })
-        }
-        return response.status(201).json({ session: data.session, user: data.user, confirmationRequired: !data.session })
       }
-      return response.status(400).json({ error: 'A valid email address or phone number is required' })
     }
 
-    const { data, error } = await createAuthClient().auth.signUp({
-      email: normalizedEmail,
+    const rawDigits = normalizedPhone ? normalizedPhone.replace(/\D/g, '') : ''
+    const authEmail = normalizedEmail || `phone_${rawDigits}@loyaltea.local`
+
+    // Use admin client to create pre-confirmed customer account with zero email confirmation or SMS OTP needed
+    const { data: createdData, error: createError } = await createAdminAuthClient().auth.admin.createUser({
+      email: authEmail,
+      email_confirm: true,
       password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-          role: 'CUSTOMER',
-          ...(normalizedPhone ? { phone: normalizedPhone } : {}),
-        },
-        emailRedirectTo: config.authRedirectUrl,
+      user_metadata: {
+        full_name: fullName.trim(),
+        role: 'CUSTOMER',
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+        ...(normalizedEmail ? { real_email: normalizedEmail } : {}),
       },
     })
-    if (error) return response.status(400).json({ error: error.message, code: error.code })
-    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      return response.status(409).json({
-        error: 'An account with this email address already exists. Please sign in instead.',
-        code: 'USER_ALREADY_EXISTS',
+
+    if (createError) {
+      if (/already registered|already in use|unique constraint/i.test(createError.message)) {
+        return response.status(409).json({
+          error: 'An account with this email or phone number already exists. Please sign in instead.',
+          code: 'USER_ALREADY_EXISTS',
+        })
+      }
+      return response.status(400).json({ error: createError.message, code: createError.code })
+    }
+
+    // Ensure public.users and public.customers are populated
+    await pool.query(
+      `INSERT INTO public.users (id, role, full_name, phone)
+       VALUES ($1, 'CUSTOMER', $2, $3)
+       ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, phone = coalesce(EXCLUDED.phone, public.users.phone), updated_at = now()`,
+      [createdData.user.id, fullName.trim(), normalizedPhone || null]
+    )
+    await pool.query(
+      `INSERT INTO public.customers (id, email)
+       VALUES ($1, $2)
+       ON CONFLICT (id) DO UPDATE SET email = coalesce(EXCLUDED.email, public.customers.email), updated_at = now()`,
+      [createdData.user.id, normalizedEmail || null]
+    )
+
+    // Sign in immediately to provide live session tokens
+    const { data: signinData, error: signinError } = await createAuthClient().auth.signInWithPassword({
+      email: authEmail,
+      password,
+    })
+
+    if (signinError || !signinData?.session) {
+      return response.status(201).json({
+        user: createdData.user,
+        session: null,
+        confirmationRequired: false,
       })
     }
-    return response.status(201).json({ session: data.session, user: data.user, confirmationRequired: !data.session })
+
+    const expiresIn = Number(signinData.session.expires_in) || 3600
+    const session = {
+      ...signinData.session,
+      expires_in: expiresIn,
+      expires_at: signinData.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+    }
+
+    return response.status(201).json({ session, user: signinData.user, confirmationRequired: false })
   } catch (error) {
     return next(error)
   }
 })
 
-router.post('/auth/refresh', authLimiter, async (request, response, next) => {
+router.post('/auth/refresh', refreshLimiter, async (request, response, next) => {
   try {
     const { refreshToken } = request.body || {}
-    if (!refreshToken || typeof refreshToken !== 'string') return response.status(400).json({ error: 'refreshToken is required' })
+    if (!refreshToken || typeof refreshToken !== 'string') return response.status(400).json({ error: 'refreshToken is required', code: 'MISSING_REFRESH_TOKEN' })
     const { data, error } = await createAuthClient().auth.refreshSession({ refresh_token: refreshToken })
-    if (error || !data.session) return response.status(401).json({ error: 'Refresh token is invalid or expired' })
-    return response.json({ session: data.session, user: data.user })
+    if (error || !data.session) return response.status(401).json({ error: error?.message || 'Refresh token is invalid or expired', code: error?.code || 'INVALID_REFRESH_TOKEN' })
+    const expiresIn = Number(data.session.expires_in) || 3600
+    const session = {
+      ...data.session,
+      expires_in: expiresIn,
+      expires_at: data.session.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
+    }
+    return response.json({ session, user: data.user })
   } catch (error) {
     return next(error)
   }
 })
 
-router.post('/auth/logout', requireAuth, async (request, response, next) => {
+router.post('/auth/logout', async (request, response, next) => {
   try {
-    const { error } = await createUserClient(request.accessToken).auth.signOut()
-    if (error && !/session not found|already signed out/i.test(error.message)) return next(error)
+    const authorization = request.get('authorization')
+    const accessToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : null
+    if (accessToken) {
+      try {
+        await createUserClient(accessToken).auth.signOut()
+      } catch {
+        // Silently ignore if token is already expired or already signed out
+      }
+    }
     return response.status(204).end()
   } catch (error) {
     return next(error)
@@ -352,6 +389,101 @@ router.get('/customer/memberships', async (request, response, next) => {
     }
 
     return response.json({ memberships: data || [], transactions })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.get('/activity', async (request, response, next) => {
+  try {
+    const rawLimit = Number(request.query.limit)
+    const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 2
+    const rawOffset = Number(request.query.offset)
+    const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
+    const requestedBusinessId = request.query.businessId && isUuid(request.query.businessId) ? request.query.businessId : null
+
+    const conditions = []
+    const params = []
+    let pIdx = 1
+
+    if (request.profile?.role === 'PLATFORM_ADMIN') {
+      if (requestedBusinessId) {
+        conditions.push(`t.business_id = ${pIdx++}`)
+        params.push(requestedBusinessId)
+      }
+    } else if (staffRoles.includes(request.profile?.role)) {
+      if (requestedBusinessId) {
+        if (!request.businessIds.includes(requestedBusinessId)) {
+          return response.status(403).json({ error: 'Business access denied' })
+        }
+        conditions.push(`t.business_id = ${pIdx++}`)
+        params.push(requestedBusinessId)
+      } else {
+        if (!request.businessIds.length) {
+          return response.json({ activities: [], hasMore: false, total: 0 })
+        }
+        conditions.push(`t.business_id = ANY(${pIdx++})`)
+        params.push(request.businessIds)
+      }
+    } else if (request.profile?.role === 'CUSTOMER') {
+      conditions.push(`m.customer_id = ${pIdx++}`)
+      params.push(request.user.id)
+      if (requestedBusinessId) {
+        conditions.push(`t.business_id = ${pIdx++}`)
+        params.push(requestedBusinessId)
+      }
+    } else {
+      return response.status(403).json({ error: 'Access denied' })
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const countQuery = `
+      SELECT count(*)::int as total
+      FROM public.transactions t
+      JOIN public.customer_memberships m ON m.id = t.membership_id
+      ${whereClause}
+    `
+    const countRes = await pool.query(countQuery, params)
+    const total = countRes.rows[0]?.total || 0
+
+    const queryParams = [...params, limit, offset]
+    const listQuery = `
+      SELECT 
+        t.id,
+        t.membership_id,
+        t.business_id,
+        t.location_id,
+        t.employee_id,
+        t.type,
+        t.stamps_delta,
+        t.points_delta,
+        t.metadata,
+        t.created_at,
+        b.name AS business_name,
+        u.full_name AS customer_name,
+        c.email AS customer_email,
+        u.phone AS customer_phone
+      FROM public.transactions t
+      JOIN public.customer_memberships m ON m.id = t.membership_id
+      JOIN public.businesses b ON b.id = t.business_id
+      LEFT JOIN public.users u ON u.id = m.customer_id
+      LEFT JOIN public.customers c ON c.id = m.customer_id
+      ${whereClause}
+      ORDER BY t.created_at DESC, t.id DESC
+      LIMIT ${queryParams.length - 1} OFFSET ${queryParams.length}
+    `
+    const listRes = await pool.query(listQuery, queryParams)
+    const activities = listRes.rows
+    const hasMore = offset + activities.length < total
+
+    return response.json({
+      activities,
+      hasMore,
+      total,
+      limit,
+      offset,
+    })
   } catch (error) {
     return next(error)
   }
@@ -869,8 +1001,22 @@ router.patch('/programs/:programId', requireRoles(...managerRoles), async (reque
     }
 
     if (is_active !== undefined) {
-      updates.push(`is_active = $${idx++}`)
-      values.push(Boolean(is_active))
+      const willBeActive = Boolean(is_active)
+      if (willBeActive) {
+        const existingActive = await pool.query(
+          'SELECT id, name FROM public.rewards WHERE program_id = $1 AND is_active = true AND id <> $2 LIMIT 1',
+          [rewResult.rows[0].program_id, request.params.rewardId]
+        )
+        if (existingActive.rowCount > 0) {
+          return response.status(409).json({
+            error: 'Another active offer already exists for this business. Deactivate it before activating this offer.',
+            code: 'ACTIVE_OFFER_EXISTS',
+            activeOffer: existingActive.rows[0],
+          })
+        }
+      }
+      updates.push(`is_active = ${idx++}`)
+      values.push(willBeActive)
     }
 
     if (!updates.length) return response.status(400).json({ error: 'No update fields provided', code: 'NO_UPDATE_FIELDS' })
@@ -956,6 +1102,12 @@ router.patch('/rewards/:rewardId', requireRoles(...managerRoles), async (request
     )
     return response.json({ reward: result.rows[0] })
   } catch (error) {
+    if (error.code === '23505' && (error.constraint === 'rewards_single_active_offer_idx' || /rewards_single_active_offer/i.test(error.message || ''))) {
+      return response.status(409).json({
+        error: 'An active offer already exists for this business. Deactivate or delete the current offer before activating another offer.',
+        code: 'ACTIVE_OFFER_EXISTS',
+      })
+    }
     return next(error)
   }
 })
@@ -1049,6 +1201,19 @@ async function insertTable(request, response, next, table, allowedFields, requir
       }
       if (!payload.name || typeof payload.name !== 'string' || !payload.name.trim()) {
         return response.status(400).json({ error: 'Reward name is required', code: 'INVALID_REWARD_NAME' })
+      }
+      if (payload.is_active !== false) {
+        const activeCheck = await pool.query(
+          'SELECT id, name FROM public.rewards WHERE program_id = $1 AND is_active = true LIMIT 1',
+          [payload.program_id]
+        )
+        if (activeCheck.rowCount > 0) {
+          return response.status(409).json({
+            error: 'An active offer already exists for this business. Deactivate or delete the current offer before creating a new active offer.',
+            code: 'ACTIVE_OFFER_EXISTS',
+            activeOffer: activeCheck.rows[0],
+          })
+        }
       }
       if (program.model === 'STAMPS') {
         const stamps = Number(payload.required_stamps)

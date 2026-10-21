@@ -1,18 +1,55 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Coffee, Gift, LogOut, QrCode, Sparkles, X } from 'lucide-react'
+import {
+  Calendar,
+  Camera,
+  Check,
+  CheckCircle2,
+  Clock,
+  Coffee,
+  Copy,
+  Gift,
+  KeyRound,
+  LogOut,
+  QrCode,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiFetch } from '../lib/api'
 import PreferencesControls from '../components/PreferencesControls'
 import { usePreferences } from '../contexts/usePreferences'
+import ActivityLogSection from '../components/common/ActivityLogSection'
+
+const BRAND_PALETTES = [
+  { gradient: 'linear-gradient(135deg, #1d3832 0%, #295147 100%)', badge: '#438a72', border: '#295147' },
+  { gradient: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)', badge: '#3b82f6', border: '#2563eb' },
+  { gradient: 'linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%)', badge: '#8b5cf6', border: '#6d28d9' },
+  { gradient: 'linear-gradient(135deg, #7c2d12 0%, #c2410c 100%)', badge: '#ea580c', border: '#c2410c' },
+  { gradient: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)', badge: '#14b8a6', border: '#0d9488' },
+  { gradient: 'linear-gradient(135deg, #831843 0%, #db2777 100%)', badge: '#ec4899', border: '#db2777' },
+  { gradient: 'linear-gradient(135deg, #374151 0%, #4b5563 100%)', badge: '#6b7280', border: '#4b5563' },
+  { gradient: 'linear-gradient(135deg, #3f2c20 0%, #78350f 100%)', badge: '#d97706', border: '#78350f' },
+]
+
+function getBusinessTheme(str) {
+  let hash = 0
+  const text = String(str || 'loyaltea')
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const idx = Math.abs(hash) % BRAND_PALETTES.length
+  return BRAND_PALETTES[idx]
+}
 
 export default function CustomerPage({ session, profile, onSignOut }) {
   const { t } = usePreferences()
   const [memberships, setMemberships] = useState([])
-  const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [joinScannerOpen, setJoinScannerOpen] = useState(false)
   const [selectedMembership, setSelectedMembership] = useState(null)
+  const [tokenModalMembership, setTokenModalMembership] = useState(null)
+  const [copiedToken, setCopiedToken] = useState(false)
   const [scannerActive, setScannerActive] = useState(false)
   const [scannerError, setScannerError] = useState('')
   const scannerRef = useRef(null)
@@ -22,9 +59,8 @@ export default function CustomerPage({ session, profile, onSignOut }) {
     try {
       const result = await apiFetch('/api/customer/memberships', session.access_token)
       setMemberships(result.memberships || [])
-      setTransactions(result.transactions || [])
     } catch (requestError) {
-      setError(requestError.message || t('couldNotLoadCards'))
+      setError(requestError.message || t('couldNotLoadCards', 'Could not load your loyalty cards'))
     } finally {
       setLoading(false)
     }
@@ -36,15 +72,16 @@ export default function CustomerPage({ session, profile, onSignOut }) {
       .then((result) => {
         if (!mounted) return
         setMemberships(result.memberships || [])
-        setTransactions(result.transactions || [])
       })
       .catch((requestError) => {
-        if (mounted) setError(requestError.message || t('couldNotLoadCards'))
+        if (mounted) setError(requestError.message || t('couldNotLoadCards', 'Could not load your loyalty cards'))
       })
       .finally(() => {
         if (mounted) setLoading(false)
       })
-    return () => { mounted = false }
+    return () => {
+      mounted = false
+    }
   }, [session.access_token, t])
 
   const handleRetry = () => {
@@ -67,39 +104,46 @@ export default function CustomerPage({ session, profile, onSignOut }) {
     setScannerActive(false)
   }, [])
 
-  const handleDecodedJoinCode = useCallback((decodedText) => {
-    const raw = (decodedText || '').trim()
-    if (!raw) return
-    stopScanner()
-    setJoinScannerOpen(false)
+  const handleDecodedJoinCode = useCallback(
+    (decodedText) => {
+      const raw = (decodedText || '').trim()
+      if (!raw) return
+      stopScanner()
+      setJoinScannerOpen(false)
 
-    try {
-      const url = new URL(raw, window.location.origin)
-      if (url.pathname.startsWith('/join/')) {
-        window.location.assign(url.href)
+      try {
+        const url = new URL(raw, window.location.origin)
+        if (url.pathname.startsWith('/join/')) {
+          window.location.assign(url.href)
+          return
+        }
+      } catch {
+        // not a standard URL
+      }
+
+      if (raw.startsWith('/join/')) {
+        window.location.assign(raw)
         return
       }
-    } catch {
-      // not a standard URL
-    }
 
-    if (raw.startsWith('/join/')) {
-      window.location.assign(raw)
-      return
-    }
+      if (/^https?:\/\//i.test(raw)) {
+        window.location.assign(raw)
+        return
+      }
 
-    if (/^https?:\/\//i.test(raw)) {
-      window.location.assign(raw)
-      return
-    }
-
-    window.location.assign(`/join/business/${encodeURIComponent(raw)}`)
-  }, [stopScanner])
+      window.location.assign(`/join/business/${encodeURIComponent(raw)}`)
+    },
+    [stopScanner]
+  )
 
   const startScanner = useCallback(async () => {
     setScannerError('')
-    if (typeof window !== 'undefined' && !window.isSecureContext && !/localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
-      setScannerError(t('cameraInsecureOrigin'))
+    if (
+      typeof window !== 'undefined' &&
+      !window.isSecureContext &&
+      !/localhost|127\.0\.0\.1/i.test(window.location.hostname)
+    ) {
+      setScannerError(t('cameraInsecureOrigin', 'Camera requires HTTPS or localhost'))
       return
     }
     try {
@@ -119,20 +163,20 @@ export default function CustomerPage({ session, profile, onSignOut }) {
           handleDecodedJoinCode(decodedText)
         },
         () => {
-          // ignore per-frame parse failures
+          // ignore frame errors
         }
       )
     } catch (err) {
       const name = err?.name || ''
       const msg = err?.message || String(err || '')
       if (name === 'NotAllowedError' || /permission|denied|allowed/i.test(msg)) {
-        setScannerError(t('cameraAccessFailed'))
+        setScannerError(t('cameraAccessFailed', 'Camera access was denied'))
       } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || /not found|device/i.test(msg)) {
-        setScannerError(t('cameraNotFound'))
+        setScannerError(t('cameraNotFound', 'No camera detected'))
       } else if (name === 'NotSupportedError' || /not supported/i.test(msg)) {
-        setScannerError(t('cameraScannerUnsupported'))
+        setScannerError(t('cameraScannerUnsupported', 'Scanner not supported on this browser'))
       } else {
-        setScannerError(msg || t('couldNotStartScanner'))
+        setScannerError(msg || t('couldNotStartScanner', 'Could not start camera scanner'))
       }
       setScannerActive(false)
     }
@@ -143,6 +187,26 @@ export default function CustomerPage({ session, profile, onSignOut }) {
     setJoinScannerOpen(false)
     setScannerError('')
   }, [stopScanner])
+
+  const copyToken = async (token) => {
+    if (!token) return
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(token)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = token
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCopiedToken(true)
+      setTimeout(() => setCopiedToken(false), 2500)
+    } catch {
+      // Ignore clipboard error
+    }
+  }
 
   useEffect(() => {
     if (!joinScannerOpen) return undefined
@@ -162,7 +226,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
           if (scannerRef.current.isScanning) scannerRef.current.stop().catch(() => {})
           scannerRef.current.clear()
         } catch {
-          // cleanup on unmount
+          // cleanup
         }
         scannerRef.current = null
       }
@@ -170,22 +234,25 @@ export default function CustomerPage({ session, profile, onSignOut }) {
   }, [])
 
   useEffect(() => {
-    if (!selectedMembership && !joinScannerOpen) return undefined
+    if (!selectedMembership && !joinScannerOpen && !tokenModalMembership) return undefined
     const closeOnEscape = (event) => {
       if (event.key === 'Escape') {
         setSelectedMembership(null)
+        setTokenModalMembership(null)
         closeScanner()
       }
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [selectedMembership, joinScannerOpen, closeScanner])
+  }, [selectedMembership, joinScannerOpen, tokenModalMembership, closeScanner])
 
   if (loading) {
     return (
       <div className="app-state">
-        <div className="brand-mark loading-pulse"><Coffee size={24} strokeWidth={2.5} /></div>
-        <strong>{t('loadingLoyaltyCards')}</strong>
+        <div className="brand-mark loading-pulse">
+          <Coffee size={24} strokeWidth={2.5} />
+        </div>
+        <strong>{t('loadingLoyaltyCards', 'Loading your loyalty cards...')}</strong>
       </div>
     )
   }
@@ -193,14 +260,14 @@ export default function CustomerPage({ session, profile, onSignOut }) {
   if (error) {
     return (
       <div className="app-state">
-        <strong>{t('couldNotLoadCards')}</strong>
+        <strong>{t('couldNotLoadCards', 'Could not load your loyalty cards')}</strong>
         <p>{error}</p>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '8px' }}>
           <button className="primary-button" onClick={handleRetry}>
-            {t('tryAgain')}
+            {t('tryAgain', 'Try again')}
           </button>
           <button className="text-button" onClick={onSignOut}>
-            {t('signOut')}
+            {t('signOut', 'Sign out')}
           </button>
         </div>
       </div>
@@ -211,13 +278,15 @@ export default function CustomerPage({ session, profile, onSignOut }) {
     <main className="customer-page">
       <header className="customer-header">
         <div className="brand-row">
-          <div className="brand-mark"><Coffee size={18} strokeWidth={2.5} /></div>
+          <div className="brand-mark">
+            <Coffee size={18} strokeWidth={2.5} />
+          </div>
           <span>loyaltea</span>
         </div>
         <div className="customer-header-actions">
           <PreferencesControls compact />
-          <span className="customer-profile-name">{profile?.full_name || t('customer')}</span>
-          <button className="icon-button" onClick={onSignOut} aria-label={t('signOut')} title={t('signOut')}>
+          <span className="customer-profile-name">{profile?.full_name || t('customer', 'Customer')}</span>
+          <button className="icon-button" onClick={onSignOut} aria-label={t('signOut', 'Sign out')} title={t('signOut', 'Sign out')}>
             <LogOut size={18} />
           </button>
         </div>
@@ -225,262 +294,250 @@ export default function CustomerPage({ session, profile, onSignOut }) {
 
       <section className="customer-hero">
         <div>
-          <p className="eyebrow">{t('loyaltyWallet')}</p>
-          <h1>{t('everyVisitCounts')}</h1>
-          <p className="heading-copy">{t('scanBusinessToJoin')}</p>
+          <p className="eyebrow">{t('loyaltyWallet', 'Loyalty Wallet')}</p>
+          <h1>{t('everyVisitCounts', 'Every visit brings you closer to your reward')}</h1>
+          <p className="heading-copy">{t('scanBusinessToJoin', 'Scan a business QR code to join their loyalty program')}</p>
         </div>
         <button className="primary-button" onClick={() => setJoinScannerOpen(true)}>
-          <Camera size={16} /> {t('scanBusinessQr')}
+          <Camera size={16} /> {t('scanBusinessQr', 'Scan Business QR')}
         </button>
       </section>
 
       {memberships.length === 0 ? (
         <section className="customer-empty">
-          <Sparkles size={24} />
-          <h2>{t('joinFirstProgram')}</h2>
-          <p>{t('askBusinessToScan')}</p>
-          <button className="primary-button" onClick={() => setJoinScannerOpen(true)}>
-            <Camera size={16} /> {t('scanBusinessQr')}
+          <Sparkles size={28} />
+          <h2>{t('joinFirstProgram', 'No Loyalty Cards Yet')}</h2>
+          <p>{t('askBusinessToScan', 'Scan a QR code at your favorite local business to get your first digital stamp or points card.')}</p>
+          <button className="primary-button" style={{ marginTop: '12px' }} onClick={() => setJoinScannerOpen(true)}>
+            <Camera size={16} /> {t('scanBusinessQr', 'Scan Business QR')}
           </button>
         </section>
       ) : (
         <section className="membership-grid">
           {memberships.map((membership) => {
             const program = membership.loyalty_programs || {}
+            const businessName = program.businesses?.name || program.name || t('loyaltyProgram', 'Loyalty Program')
             const isPoints = program.model === 'POINTS'
-            const balance = isPoints ? (membership.points_balance || 0) : (membership.stamps_balance || 0)
-            const unit = isPoints ? t('points') : t('stamps')
+            const balance = isPoints ? membership.points_balance || 0 : membership.stamps_balance || 0
+            const unit = isPoints ? t('points', 'points') : t('stamps', 'stamps')
 
-            // Filter active non-expired rewards and sort ascending by requirement
-            const rewards = (program.rewards || [])
-              .filter((r) => r.is_active && (!r.expires_at || new Date(r.expires_at) > new Date()))
-              .sort((a, b) => {
-                const costA = isPoints ? (a.required_points || 0) : (a.required_stamps || 0)
-                const costB = isPoints ? (b.required_points || 0) : (b.required_stamps || 0)
-                return costA - costB
-              })
+            const theme = getBusinessTheme(businessName)
 
-            // Next reward milestone (threshold > balance)
-            const nextReward = rewards.find((r) => {
-              const cost = isPoints ? (r.required_points || 0) : (r.required_stamps || 0)
-              return cost > balance
-            })
+            // Find the active offer
+            const allRewards = program.rewards || []
+            const activeOffer = allRewards.find((r) => r.is_active)
+            const isOfferExpired = activeOffer?.expires_at && new Date(activeOffer.expires_at) <= new Date()
 
-            // Highest unlocked reward (cost <= balance)
-            const unlockedRewards = rewards.filter((r) => {
-              const cost = isPoints ? (r.required_points || 0) : (r.required_stamps || 0)
-              return balance >= cost
-            })
-            const highestUnlocked = unlockedRewards.length > 0 ? unlockedRewards[unlockedRewards.length - 1] : null
+            const targetThreshold = activeOffer
+              ? (isPoints ? activeOffer.required_points : activeOffer.required_stamps) || 1
+              : 10
 
-            // Progress calculation
-            let progressPercent = 0
-            let targetThreshold = 1
-            let milestoneHint = ''
-
-            if (nextReward) {
-              targetThreshold = isPoints ? nextReward.required_points : nextReward.required_stamps
-              progressPercent = Math.min(100, Math.max(0, Math.round((balance / targetThreshold) * 100)))
-              const needed = targetThreshold - balance
-              milestoneHint = `${needed} ${unit} ${t('until')} ${nextReward.name}`
-            } else if (rewards.length > 0) {
-              const topReward = rewards[rewards.length - 1]
-              targetThreshold = isPoints ? topReward.required_points : topReward.required_stamps
-              progressPercent = 100
-              milestoneHint = t('allRewardsUnlocked')
-            } else {
-              targetThreshold = 1
-              progressPercent = 0
-              milestoneHint = program.description || t('keepGoing')
-            }
-
-            // Clean masked token representation
-            const tokenSuffix = membership.secure_token
-              ? membership.secure_token.slice(-6).toUpperCase()
-              : '••••••'
+            const progressPercent = Math.min(100, Math.max(0, Math.round((balance / targetThreshold) * 100)))
+            const isUnlocked = activeOffer && balance >= targetThreshold && !isOfferExpired
 
             return (
-              <article className="membership-card" key={membership.id}>
-                {/* Header: Business & Program Name + Badges */}
-                <div className="membership-card-header">
-                  <div className="membership-brand-info">
-                    <p className="eyebrow">{program.businesses?.name || t('loyaltyProgram')}</p>
-                    <h2 className="membership-program-title">{program.name || t('loyaltyProgram')}</h2>
-                  </div>
-                  <div className="membership-meta-badges">
-                    <span className="membership-model-badge">{unit}</span>
-                    <span className="membership-token-badge" title={`${t('cardId')}: ${membership.secure_token}`}>
-                      ID: •••• {tokenSuffix}
-                    </span>
-                  </div>
-                </div>
+              <article className="membership-card customer-card-enhanced" key={membership.id}>
+                {/* Visual Business Brand Header Ribbon */}
+                <div className="card-brand-stripe" style={{ background: theme.gradient }} />
 
-                {/* Hero Section: Balance & Touch-friendly QR thumbnail */}
-                <div className="membership-hero-row">
-                  <div className="membership-balance-section">
-                    <div className="membership-balance">
-                      <strong>{balance}</strong>
-                      <span>{unit}</span>
+                <div className="membership-card-inner">
+                  {/* Header: Prominent Business Name & Loyalty Model Badge */}
+                  <div className="membership-card-header">
+                    <div className="membership-brand-info">
+                      <h2 className="membership-business-title">{businessName}</h2>
+                      <p className="membership-program-subtitle">{program.name || t('loyaltyProgram', 'Loyalty Program')}</p>
                     </div>
-                    <div className="membership-milestone-hint">
-                      <Sparkles size={14} className="milestone-sparkle" />
-                      <span>{milestoneHint}</span>
+                    <div className="membership-meta-badges">
+                      <span className="membership-model-badge" style={{ borderColor: theme.badge, color: theme.badge }}>
+                        {isPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
+                      </span>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    className="membership-qr-touch-target"
-                    onClick={() => setSelectedMembership(membership)}
-                    aria-label={`${t('tapToEnlargeQr')} - ${program.businesses?.name || ''}`}
-                    title={t('tapToEnlargeQr')}
-                  >
-                    <div className="membership-qr-plate">
-                      <QRCodeSVG
-                        value={membership.secure_token}
-                        size={76}
-                        level="M"
-                        includeMargin={false}
-                        bgColor="#ffffff"
-                        fgColor="#1d3832"
-                      />
+                  {/* Hero Balance & Touch QR Target */}
+                  <div className="membership-hero-row">
+                    <div className="membership-balance-section">
+                      <div className="membership-balance">
+                        <strong>{balance}</strong>
+                        <span>{unit}</span>
+                      </div>
+                      <div className="membership-milestone-hint">
+                        {isUnlocked ? (
+                          <span className="unlocked-hint">
+                            <Sparkles size={14} className="milestone-sparkle" />
+                            <strong>{t('rewardReadyToRedeem', 'Reward ready to redeem!')}</strong>
+                          </span>
+                        ) : activeOffer ? (
+                          <span>
+                            {Math.max(0, targetThreshold - balance)} {unit} {t('until', 'until')} {activeOffer.name}
+                          </span>
+                        ) : (
+                          <span>{t('keepGoing', 'Keep visiting to earn rewards')}</span>
+                        )}
+                      </div>
                     </div>
-                    <span className="qr-touch-label">{t('tapToEnlarge')}</span>
-                  </button>
-                </div>
 
-                {/* Mathematical Progress Bar */}
-                <div className="membership-progress-section">
-                  <div className="progress-labels">
-                    <span className="progress-current">
-                      {balance} / {targetThreshold} {unit}
-                    </span>
-                    <span className="progress-percentage">{progressPercent}%</span>
+                    <button
+                      type="button"
+                      className="membership-qr-touch-target"
+                      onClick={() => setSelectedMembership(membership)}
+                      aria-label={`${t('tapToEnlargeQr', 'Tap to enlarge QR')} - ${businessName}`}
+                      title={t('tapToEnlargeQr', 'Tap to enlarge QR')}
+                    >
+                      <div className="membership-qr-plate">
+                        <QRCodeSVG
+                          value={membership.secure_token}
+                          size={76}
+                          level="M"
+                          includeMargin={false}
+                          bgColor="#ffffff"
+                          fgColor="#1d3832"
+                        />
+                      </div>
+                      <span className="qr-touch-label">{t('tapToEnlarge', 'Enlarge')}</span>
+                    </button>
                   </div>
-                  <div className="membership-progress" role="progressbar" aria-valuenow={progressPercent} aria-valuemin={0} aria-valuemax={100}>
-                    <span style={{ width: `${progressPercent}%` }} />
-                  </div>
-                </div>
 
-                {/* Unlocked Reward Callout Banner (if unlocked) */}
-                {highestUnlocked && (
-                  <div className="unlocked-reward-banner">
-                    <Sparkles size={14} />
-                    <span>{t('rewardUnlocked')}: <strong>{highestUnlocked.name}</strong></span>
+                  {/* Mathematical Progress Bar */}
+                  <div className="membership-progress-section">
+                    <div className="progress-labels">
+                      <span className="progress-current">
+                        {balance} / {targetThreshold} {unit}
+                      </span>
+                      <span className="progress-percentage">{progressPercent}%</span>
+                    </div>
+                    <div
+                      className="membership-progress"
+                      role="progressbar"
+                      aria-valuenow={progressPercent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <span style={{ width: `${progressPercent}%`, background: theme.badge }} />
+                    </div>
                   </div>
-                )}
 
-                {/* Rewards Milestones List */}
-                {rewards.length > 0 && (
-                  <div className="membership-rewards">
-                    <span className="rewards-section-title">{t('rewards')}</span>
-                    {rewards.slice(0, 3).map((reward) => {
-                      const threshold = isPoints ? reward.required_points : reward.required_stamps
-                      const isUnlocked = balance >= threshold
-                      return (
-                        <div className={`reward-row ${isUnlocked ? 'reward-unlocked' : ''}`} key={reward.id}>
-                          <div className="reward-icon-wrapper">
-                            {isUnlocked ? <Check size={14} strokeWidth={2.8} /> : <Gift size={14} />}
-                          </div>
-                          <div className="reward-details">
-                            <span className="reward-name">{reward.name}</span>
-                            <small className="reward-cost">{threshold} {unit}</small>
-                          </div>
-                          {isUnlocked ? (
-                            <span className="reward-status-pill unlocked">{t('unlocked')}</span>
-                          ) : (
-                            <span className="reward-status-pill locked">
-                              {threshold - balance} {unit} {t('until')}
-                            </span>
-                          )}
+                  {/* Active Offer Details Card */}
+                  {activeOffer ? (
+                    <div className={`customer-offer-card ${isUnlocked ? 'is-unlocked' : ''}`}>
+                      <div className="offer-card-top">
+                        <div className="offer-card-icon">
+                          {isUnlocked ? <CheckCircle2 size={18} /> : <Gift size={18} />}
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        <div className="offer-card-text">
+                          <strong className="offer-card-name">{activeOffer.name}</strong>
+                          <p className="offer-card-desc">
+                            {activeOffer.description || t('noDescription', 'Reward upon reaching required progress')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="offer-card-footer">
+                        <span className="offer-req-badge">
+                          {targetThreshold} {unit} {t('required', 'required')}
+                        </span>
+                        {activeOffer.expires_at ? (
+                          <span className={`offer-expiry-badge ${isOfferExpired ? 'expired' : ''}`}>
+                            <Calendar size={12} style={{ marginRight: '4px', verticalAlign: '-1px' }} />
+                            {isOfferExpired
+                              ? t('offerExpired', 'Expired')
+                              : `${t('expiresAt', 'Expires')}: ${new Date(activeOffer.expires_at).toLocaleDateString()}`}
+                          </span>
+                        ) : (
+                          <span className="offer-no-expiry-badge">
+                            <Clock size={12} style={{ marginRight: '4px', verticalAlign: '-1px' }} />
+                            {t('noExpirationDate', 'No expiration date')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="customer-offer-card is-pending">
+                      <Gift size={16} />
+                      <span>{t('noActiveOfferNotice', 'No current active offer configured for this business yet.')}</span>
+                    </div>
+                  )}
 
-                {/* Primary Card CTA Button (Min 44px touch target) */}
-                <button
-                  type="button"
-                  className="membership-scan-cta"
-                  onClick={() => setSelectedMembership(membership)}
-                  aria-label={`${t('showAtCounter')} - ${program.businesses?.name || ''}`}
-                >
-                  <QrCode size={18} />
-                  <span>{t('showAtCounter')}</span>
-                </button>
+                  {/* Dual Action CTAs: Show at counter (QR) & Show Membership Token */}
+                  <div className="customer-card-actions-row">
+                    <button
+                      type="button"
+                      className="primary-button card-qr-btn"
+                      onClick={() => setSelectedMembership(membership)}
+                    >
+                      <QrCode size={16} />
+                      <span>{t('showQrCode', 'Show QR Code')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button card-token-btn"
+                      onClick={() => setTokenModalMembership(membership)}
+                    >
+                      <KeyRound size={15} />
+                      <span>{t('showMembershipToken', 'Show Membership Token')}</span>
+                    </button>
+                  </div>
+                </div>
               </article>
             )
           })}
         </section>
       )}
 
-      {transactions.length > 0 && (
-        <section className="customer-history">
-          <div className="panel-heading">
-            <div>
-              <h2>{t('recentActivity')}</h2>
-              <p>{t('latestLoyaltyMovements')}</p>
-            </div>
-          </div>
-          {transactions.slice(0, 8).map((transaction) => {
-            const delta = transaction.stamps_delta || transaction.points_delta
-            return (
-              <div className="history-row" key={transaction.id}>
-                <span>{transaction.type === 'EARN' ? t('loyaltyEarned') : t('rewardRedeemed')}</span>
-                <strong className={delta > 0 ? 'history-positive' : 'history-negative'}>
-                  {delta > 0 ? '+' : ''}{delta}
-                </strong>
-                <small>{new Date(transaction.created_at).toLocaleDateString()}</small>
-              </div>
-            )
-          })}
-        </section>
-      )}
+      {/* Reusable Chronological Activity Log Section */}
+      <div style={{ marginTop: '32px' }}>
+        <ActivityLogSection
+          accessToken={session.access_token}
+          initialLimit={2}
+          loadBatchSize={20}
+          title={t('myLoyaltyActivity', 'My Loyalty Activity')}
+          subtitle={t('recentTransactionsSubtitle', 'Your recent stamps, points, and reward redemptions')}
+        />
+      </div>
 
+      {/* Modal: Camera Join Scanner */}
       {joinScannerOpen && (
         <div className="qr-modal-backdrop" role="presentation" onClick={closeScanner}>
           <section
             className="qr-modal customer-scanner-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={t('scanBusinessJoinQr')}
+            aria-label={t('scanBusinessJoinQr', 'Scan Business QR')}
             onClick={(event) => event.stopPropagation()}
           >
-            <button className="icon-button qr-close" onClick={closeScanner} aria-label={t('close')}>
+            <button className="icon-button qr-close" onClick={closeScanner} aria-label={t('close', 'Close')}>
               <X size={18} />
             </button>
-            <div className="brand-mark modal-brand-mark"><Camera size={28} /></div>
-            <p className="eyebrow">{t('joinBusinessProgram')}</p>
-            <h2>{t('scanBusinessQr')}</h2>
+            <div className="brand-mark modal-brand-mark">
+              <Camera size={28} />
+            </div>
+            <p className="eyebrow">{t('joinBusinessProgram', 'Join Loyalty Program')}</p>
+            <h2>{t('scanBusinessQr', 'Scan Business QR')}</h2>
             <div id="customer-join-qr-reader" className="customer-join-qr-reader" />
             {scannerError && <p className="form-error">{scannerError}</p>}
             <div className="scanner-modal-actions">
               <button className="secondary-button" onClick={scannerActive ? stopScanner : startScanner}>
-                <Camera size={15} /> {scannerActive ? t('stopScanner') : t('startScanner')}
+                <Camera size={15} /> {scannerActive ? t('stopScanner', 'Stop Scanner') : t('startScanner', 'Start Scanner')}
               </button>
-            </div>
-            <div className="native-camera-hint">
-              <p><strong>{t('nativeCameraTitle')}:</strong> {t('orUseNativeCamera')}</p>
             </div>
           </section>
         </div>
       )}
 
+      {/* Modal: Enlarge QR Code for Counter Scan */}
       {selectedMembership && (
         <div className="qr-modal-backdrop" role="presentation" onClick={() => setSelectedMembership(null)}>
           <section
             className="qr-modal membership-fullscreen-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={t('customerMembershipQr')}
+            aria-label={t('customerMembershipQr', 'Loyalty Card QR')}
             onClick={(event) => event.stopPropagation()}
           >
             <button
               type="button"
               className="icon-button qr-close"
               onClick={() => setSelectedMembership(null)}
-              aria-label={t('close')}
+              aria-label={t('close', 'Close')}
             >
               <X size={18} />
             </button>
@@ -489,8 +546,8 @@ export default function CustomerPage({ session, profile, onSignOut }) {
               <Coffee size={24} strokeWidth={2.5} />
             </div>
 
-            <p className="eyebrow">{t('showAtCounter')}</p>
-            <h2>{selectedMembership.loyalty_programs?.businesses?.name || t('loyaltyProgram')}</h2>
+            <p className="eyebrow">{t('showAtCounter', 'Show at Counter')}</p>
+            <h2>{selectedMembership.loyalty_programs?.businesses?.name || t('loyaltyProgram', 'Loyalty Program')}</h2>
             <p className="modal-program-subtitle">{selectedMembership.loyalty_programs?.name}</p>
 
             <div className="modal-qr-container">
@@ -504,20 +561,26 @@ export default function CustomerPage({ session, profile, onSignOut }) {
               />
             </div>
 
-            <div className="modal-membership-meta">
-              <span className="modal-balance-badge">
-                {selectedMembership.loyalty_programs?.model === 'POINTS'
-                  ? selectedMembership.points_balance
-                  : selectedMembership.stamps_balance}{' '}
-                {selectedMembership.loyalty_programs?.model === 'POINTS' ? t('points') : t('stamps')}
-              </span>
-              <span className="modal-token-badge">
-                {t('cardId')}: •••• {selectedMembership.secure_token.slice(-6).toUpperCase()}
-              </span>
+            {/* Token display with copy feedback */}
+            <div className="modal-token-box-wrapper">
+              <span className="token-box-label">{t('membershipToken', 'Membership Token')}</span>
+              <div className="token-copy-row">
+                <code className="token-code-display">{selectedMembership.secure_token}</code>
+                <button
+                  type="button"
+                  className="icon-button token-copy-btn"
+                  onClick={() => copyToken(selectedMembership.secure_token)}
+                  title={t('copyToken', 'Copy Token')}
+                  aria-label={t('copyToken', 'Copy Token')}
+                >
+                  {copiedToken ? <Check size={16} style={{ color: '#2e7d32' }} /> : <Copy size={16} />}
+                </button>
+              </div>
+              {copiedToken && <span className="copied-inline-notice">{t('copied', 'Copied to clipboard!')}</span>}
             </div>
 
             <p className="heading-copy modal-instruction">
-              {t('fullscreenQrInstruction')}
+              {t('fullscreenQrInstruction', 'Hold this QR code up to the counter scanner to record your visit.')}
             </p>
 
             <button
@@ -525,15 +588,81 @@ export default function CustomerPage({ session, profile, onSignOut }) {
               className="secondary-button modal-done-button"
               onClick={() => setSelectedMembership(null)}
             >
-              {t('close')}
+              {t('close', 'Close')}
             </button>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Dedicated "Show Membership Token" Dialog */}
+      {tokenModalMembership && (
+        <div className="qr-modal-backdrop" role="presentation" onClick={() => setTokenModalMembership(null)}>
+          <section
+            className="qr-modal token-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('membershipToken', 'Membership Token')}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <KeyRound size={20} style={{ color: 'var(--coral, #e05a47)' }} />
+                <h3 className="modal-title">{t('membershipToken', 'Membership Token')}</h3>
+              </div>
+              <button
+                type="button"
+                className="icon-button modal-close-btn"
+                onClick={() => setTokenModalMembership(null)}
+                aria-label={t('close', 'Close')}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="token-modal-content">
+              <p className="eyebrow">
+                {tokenModalMembership.loyalty_programs?.businesses?.name || t('loyaltyProgram', 'Loyalty Program')}
+              </p>
+              <p className="heading-copy" style={{ marginBottom: '14px' }}>
+                {t(
+                  'tokenManualInstruction',
+                  'If the counter camera cannot scan your QR code, provide this unique token to the cashier to manually lookup your card.'
+                )}
+              </p>
+
+              <div className="token-full-display">
+                <code className="token-large-code">{tokenModalMembership.secure_token}</code>
+                <button
+                  type="button"
+                  className="primary-button token-action-copy-btn"
+                  onClick={() => copyToken(tokenModalMembership.secure_token)}
+                >
+                  {copiedToken ? (
+                    <>
+                      <Check size={16} /> <span>{t('copied', 'Copied!')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={16} /> <span>{t('copyToken', 'Copy Token')}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="modal-form-actions" style={{ marginTop: '20px' }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  style={{ width: '100%' }}
+                  onClick={() => setTokenModalMembership(null)}
+                >
+                  {t('close', 'Close')}
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       )}
     </main>
   )
 }
-
-
-
-

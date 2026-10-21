@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import {
-  AlertCircle,
-  Check,
+  Calendar,
+  CheckCircle,
   Coins,
   Edit2,
   Gift,
+  Info,
   Plus,
   Power,
-  Save,
-  SlidersHorizontal,
   Stamp,
   Trash2,
   X,
@@ -16,39 +15,10 @@ import {
 import { apiFetch } from '../../lib/api'
 import { usePreferences } from '../../contexts/usePreferences'
 
-export default function RewardsPanel({ program, businessId, accessToken, onProgramUpdate }) {
+export default function RewardsPanel({ program, _businessId, accessToken, onProgramUpdate }) {
   const { t } = usePreferences()
 
-  // Program configuration state
-  const [progForm, setProgForm] = useState({
-    name: program?.name || '',
-    description: program?.description || '',
-    model: program?.model || 'STAMPS',
-    points_per_currency: program?.points_per_currency || '1',
-    currency_unit: program?.currency_unit || 'DZD',
-    is_active: program?.is_active ?? true,
-  })
-  const [progSaving, setProgSaving] = useState(false)
-  const [progMessage, setProgMessage] = useState('')
-  const [progError, setProgError] = useState('')
-
-  // Sync form state when program prop changes without cascading effect renders
-  const [prevProgram, setPrevProgram] = useState(program)
-  if (program !== prevProgram) {
-    setPrevProgram(program)
-    if (program) {
-      setProgForm({
-        name: program.name || '',
-        description: program.description || '',
-        model: program.model || 'STAMPS',
-        points_per_currency: program.points_per_currency || '1',
-        currency_unit: program.currency_unit || 'DZD',
-        is_active: program.is_active ?? true,
-      })
-    }
-  }
-
-  // New offer form state
+  // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState({
     name: '',
@@ -59,7 +29,6 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
-  // Edit offer modal state
   const [editingReward, setEditingReward] = useState(null)
   const [editForm, setEditForm] = useState({
     name: '',
@@ -71,103 +40,65 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
   const [updating, setUpdating] = useState(false)
   const [updateError, setUpdateError] = useState('')
 
-  // General feedback
+  // Toast feedback
   const [actionNotice, setActionNotice] = useState('')
 
   const showNotice = (msg) => {
     setActionNotice(msg)
-    setTimeout(() => setActionNotice(''), 3000)
+    setTimeout(() => setActionNotice(''), 3500)
   }
 
-  // Handle program settings update or create
-  const handleSaveProgram = async (e) => {
-    e.preventDefault()
-    if (!accessToken) return
-    const activeBusinessId = businessId || program?.business_id
-    if (!program?.id && !activeBusinessId) {
-      setProgError(t('noWorkspace') || 'No business found to configure loyalty program')
-      return
-    }
+  const allRewards = program?.rewards || []
+  const isPoints = program?.model === 'POINTS'
+  const unit = isPoints ? t('points', 'points') : t('stamps', 'stamps')
 
-    const trimmedName = progForm.name.trim()
-    if (!trimmedName) {
-      setProgError(t('programNameRequired'))
-      return
-    }
-
-    let parsedPpc = null
-    if (progForm.model === 'POINTS') {
-      const val = Number(progForm.points_per_currency)
-      if (Number.isNaN(val) || val <= 0) {
-        setProgError(t('invalidPointsPerCurrency'))
-        return
-      }
-      parsedPpc = val
-    }
-
-    setProgSaving(true)
-    setProgMessage('')
-    setProgError('')
-    try {
-      const payload = {
-        name: trimmedName,
-        description: progForm.description.trim() || null,
-        model: progForm.model,
-        points_per_currency: parsedPpc,
-        currency_unit: progForm.currency_unit.trim() || 'DZD',
-        is_active: progForm.is_active,
-      }
-
-      if (program?.id) {
-        await apiFetch(`/api/programs/${program.id}`, accessToken, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        })
-      } else {
-        await apiFetch('/api/programs', accessToken, {
-          method: 'POST',
-          body: JSON.stringify({
-            business_id: activeBusinessId,
-            ...payload,
-          }),
-        })
-      }
-      setProgMessage(t('programSettingsSaved'))
-      if (onProgramUpdate) await onProgramUpdate()
-    } catch (err) {
-      setProgError(err.message || 'Could not save program settings')
-    } finally {
-      setProgSaving(false)
-    }
-  }
+  const activeOffer = allRewards.find((r) => r.is_active)
+  const inactiveOffers = allRewards.filter((r) => !r.is_active)
 
   // Handle creating a new offer
   const handleCreateOffer = async (e) => {
     e.preventDefault()
-    if (!program?.id || !accessToken) return
+    if (!accessToken) return
+    if (!program?.id) {
+      setCreateError(t('noProgramConfigured', 'No loyalty program found for this business.'))
+      return
+    }
+
+    if (activeOffer) {
+      setCreateError(
+        t(
+          'activeOfferExistsError',
+          'Only one active offer is allowed at a time. Please deactivate the current active offer first.'
+        )
+      )
+      return
+    }
+
     setCreating(true)
     setCreateError('')
     try {
-      const isPoints = program.model === 'POINTS'
+      const thresholdVal = Math.max(1, parseInt(createForm.threshold, 10) || 1)
       const payload = {
         program_id: program.id,
         name: createForm.name.trim(),
         description: createForm.description.trim() || undefined,
-        required_stamps: !isPoints ? Math.max(1, parseInt(createForm.threshold, 10)) : undefined,
-        required_points: isPoints ? Math.max(1, parseInt(createForm.threshold, 10)) : undefined,
+        required_stamps: !isPoints ? thresholdVal : undefined,
+        required_points: isPoints ? thresholdVal : undefined,
         expires_at: createForm.expires_at ? new Date(createForm.expires_at).toISOString() : undefined,
         is_active: true,
       }
+
       await apiFetch('/api/rewards', accessToken, {
         method: 'POST',
         body: JSON.stringify(payload),
       })
+
       setShowCreateModal(false)
       setCreateForm({ name: '', description: '', threshold: '10', expires_at: '' })
-      showNotice(t('offerCreated'))
+      showNotice(t('offerCreated', 'Offer created successfully'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
-      setCreateError(err.message || 'Could not create offer')
+      setCreateError(err.message || t('couldNotCreateOffer', 'Could not create offer'))
     } finally {
       setCreating(false)
     }
@@ -176,11 +107,13 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
   // Open edit modal
   const startEditOffer = (reward) => {
     setEditingReward(reward)
-    const isPoints = program?.model === 'POINTS'
+    const threshold = String(
+      isPoints ? reward.required_points || 10 : reward.required_stamps || 10
+    )
     setEditForm({
       name: reward.name || '',
       description: reward.description || '',
-      threshold: String(isPoints ? (reward.required_points || 10) : (reward.required_stamps || 10)),
+      threshold,
       expires_at: reward.expires_at ? reward.expires_at.slice(0, 10) : '',
       is_active: reward.is_active ?? true,
     })
@@ -191,27 +124,41 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
   const handleUpdateOffer = async (e) => {
     e.preventDefault()
     if (!editingReward?.id || !accessToken) return
+
+    // If attempting to activate this offer while another active offer exists
+    if (!editingReward.is_active && editForm.is_active && activeOffer && activeOffer.id !== editingReward.id) {
+      setUpdateError(
+        t(
+          'activeOfferExistsError',
+          'Only one active offer is allowed at a time. Please deactivate the current active offer first.'
+        )
+      )
+      return
+    }
+
     setUpdating(true)
     setUpdateError('')
     try {
-      const isPoints = program?.model === 'POINTS'
+      const thresholdVal = Math.max(1, parseInt(editForm.threshold, 10) || 1)
       const payload = {
         name: editForm.name.trim(),
         description: editForm.description.trim() || null,
-        required_stamps: !isPoints ? Math.max(1, parseInt(editForm.threshold, 10)) : undefined,
-        required_points: isPoints ? Math.max(1, parseInt(editForm.threshold, 10)) : undefined,
+        required_stamps: !isPoints ? thresholdVal : undefined,
+        required_points: isPoints ? thresholdVal : undefined,
         expires_at: editForm.expires_at ? new Date(editForm.expires_at).toISOString() : null,
         is_active: editForm.is_active,
       }
+
       await apiFetch(`/api/rewards/${editingReward.id}`, accessToken, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       })
+
       setEditingReward(null)
-      showNotice(t('offerUpdated'))
+      showNotice(t('offerUpdated', 'Offer updated successfully'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
-      setUpdateError(err.message || 'Could not update offer')
+      setUpdateError(err.message || t('couldNotUpdateOffer', 'Could not update offer'))
     } finally {
       setUpdating(false)
     }
@@ -220,321 +167,224 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
   // Toggle active status directly
   const handleToggleActive = async (reward) => {
     if (!reward?.id || !accessToken) return
+
+    // If activating and another offer is already active, prevent and show notice
+    if (!reward.is_active && activeOffer && activeOffer.id !== reward.id) {
+      showNotice(
+        t(
+          'activeOfferExistsNotice',
+          'Another offer is currently active. Deactivate it first before activating this offer.'
+        )
+      )
+      return
+    }
+
     try {
       await apiFetch(`/api/rewards/${reward.id}`, accessToken, {
         method: 'PATCH',
         body: JSON.stringify({ is_active: !reward.is_active }),
       })
-      showNotice(reward.is_active ? t('offerDeleted') : t('offerUpdated'))
+      showNotice(reward.is_active ? t('offerDeactivated', 'Offer deactivated') : t('offerActivated', 'Offer activated'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
       showNotice(err.message)
     }
   }
 
-  // Delete offer (soft deactivates if redemptions exist, deletes otherwise)
+  // Delete offer
   const handleDeleteOffer = async (reward) => {
     if (!reward?.id || !accessToken) return
-    if (!window.confirm(`${t('deleteOfferConfirm')}`)) return
+    if (!window.confirm(t('deleteOfferConfirm', 'Are you sure you want to delete this offer?'))) return
+
     try {
       await apiFetch(`/api/rewards/${reward.id}`, accessToken, {
         method: 'DELETE',
       })
-      showNotice(t('offerDeleted'))
+      showNotice(t('offerDeleted', 'Offer deleted'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
       showNotice(err.message)
     }
   }
 
-  const allRewards = program?.rewards || []
-  const isPoints = program?.model === 'POINTS'
+  const renderOfferCard = (reward, isActiveCard = false) => {
+    const threshold = isPoints ? reward.required_points || 0 : reward.required_stamps || 0
+    const isExpired = reward.expires_at && new Date(reward.expires_at) <= new Date()
+
+    return (
+      <article
+        className={`reward-management-row ${!reward.is_active ? 'is-inactive' : ''} ${
+          isActiveCard ? 'active-offer-card' : ''
+        }`}
+        key={reward.id}
+      >
+        <div className="reward-info-col">
+          <div className="reward-icon" aria-hidden="true">
+            {isPoints ? <Coins size={20} /> : <Gift size={20} />}
+          </div>
+          <div className="reward-text-details">
+            <div className="reward-title-row">
+              <strong className="reward-name">{reward.name}</strong>
+              <span
+                className={`status-pill ${
+                  reward.is_active && !isExpired ? 'ready' : isExpired ? 'paused' : ''
+                }`}
+              >
+                {!reward.is_active ? t('inactive', 'Inactive') : isExpired ? t('expired', 'Expired') : t('active', 'Active')}
+              </span>
+            </div>
+            <p className="reward-description">{reward.description || t('noDescription', 'No description provided')}</p>
+            <div className="reward-meta-row">
+              <span className="reward-threshold-badge">
+                {threshold} {unit} {t('requiredToRedeem', 'required')}
+              </span>
+              {reward.expires_at ? (
+                <span className={`reward-expiry ${isExpired ? 'is-expired' : ''}`}>
+                  <Calendar size={13} style={{ marginRight: '4px', verticalAlign: '-1px' }} />
+                  {t('expiresAt', 'Expires')}: {new Date(reward.expires_at).toLocaleDateString()}
+                </span>
+              ) : (
+                <span className="reward-no-expiry">
+                  {t('noExpirationDate', 'No expiration date')}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="reward-actions-col">
+          <div className="reward-button-group">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => startEditOffer(reward)}
+              title={t('editOffer', 'Edit offer')}
+              aria-label={`${t('editOffer', 'Edit offer')} - ${reward.name}`}
+            >
+              <Edit2 size={15} />
+            </button>
+
+            <button
+              type="button"
+              className={`icon-button ${reward.is_active ? 'accent-icon' : ''}`}
+              onClick={() => handleToggleActive(reward)}
+              title={reward.is_active ? t('deactivate', 'Deactivate') : t('activate', 'Activate')}
+              aria-label={`${reward.is_active ? t('deactivate', 'Deactivate') : t('activate', 'Activate')} - ${reward.name}`}
+            >
+              <Power size={15} />
+            </button>
+
+            <button
+              type="button"
+              className="icon-button danger-icon"
+              onClick={() => handleDeleteOffer(reward)}
+              title={t('deleteOffer', 'Delete offer')}
+              aria-label={`${t('deleteOffer', 'Delete offer')} - ${reward.name}`}
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        </div>
+      </article>
+    )
+  }
 
   return (
     <div className="rewards-management-wrapper">
       {/* Toast Notice */}
-      {actionNotice && <div className="toast"><span className="toast-check">✓</span>{actionNotice}</div>}
-
-      {/* 1. Loyalty Program Configuration Card */}
-      <section className="panel program-config-panel">
-        <div className="panel-heading program-config-heading">
-          <div className="program-heading-main">
-            <div className="program-heading-icon" aria-hidden="true">
-              <SlidersHorizontal size={20} />
-            </div>
-            <div className="program-heading-text">
-              <div className="program-heading-title-row">
-                <h2>{t('programConfiguration')}</h2>
-                <span className={`status-pill program-live-pill ${progForm.is_active ? 'ready' : 'paused'}`}>
-                  <span className="live-dot" />
-                  {progForm.is_active ? t('programActive') : t('programInactive')}
-                </span>
-              </div>
-              <p>{t('manageOffersSubtitle')}</p>
-            </div>
-          </div>
+      {actionNotice && (
+        <div className="toast">
+          <span className="toast-check">✓</span>
+          {actionNotice}
         </div>
+      )}
 
-        <form onSubmit={handleSaveProgram} className="program-config-form">
-          <div className="program-form-grid">
-            {/* Program Name */}
-            <div className="form-field-wrapper field-program-name">
-              <label htmlFor="prog-name" className="form-field-label">
-                <span>{t('programName')}</span>
-                <span className="required-star" aria-hidden="true">*</span>
-              </label>
-              <input
-                id="prog-name"
-                required
-                value={progForm.name}
-                onChange={(e) => setProgForm({ ...progForm, name: e.target.value })}
-                placeholder="e.g. VIP Club"
-                className="modern-input"
-              />
-            </div>
-
-            {/* Loyalty Model */}
-            <div className="form-field-wrapper field-program-model">
-              <label htmlFor="prog-model" className="form-field-label">
-                <span>{t('programModel')}</span>
-                <span className="required-star" aria-hidden="true">*</span>
-              </label>
-              <div className="modern-select-wrapper">
-                <select
-                  id="prog-model"
-                  value={progForm.model}
-                  onChange={(e) => setProgForm({ ...progForm, model: e.target.value })}
-                  className="modern-select"
-                >
-                  <option value="STAMPS">{t('stampsModel')}</option>
-                  <option value="POINTS">{t('pointsModel')}</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Currency Unit */}
-            <div className="form-field-wrapper field-currency-unit">
-              <label htmlFor="prog-currency" className="form-field-label">
-                <span>{t('currencyUnit')}</span>
-                <span className="required-star" aria-hidden="true">*</span>
-              </label>
-              <input
-                id="prog-currency"
-                required
-                value={progForm.currency_unit}
-                onChange={(e) => setProgForm({ ...progForm, currency_unit: e.target.value.toUpperCase() })}
-                placeholder="DZD"
-                className="modern-input uppercase-input"
-                maxLength={6}
-              />
-            </div>
-
-            {/* Points per Currency (dynamic when POINTS) */}
-            {progForm.model === 'POINTS' && (
-              <div className="form-field-wrapper field-points-ratio">
-                <label htmlFor="prog-ratio" className="form-field-label">
-                  <span>{t('pointsPerCurrency')}</span>
-                  <span className="required-star" aria-hidden="true">*</span>
-                </label>
-                <div className="input-with-badge">
-                  <input
-                    id="prog-ratio"
-                    required
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={progForm.points_per_currency}
-                    onChange={(e) => setProgForm({ ...progForm, points_per_currency: e.target.value })}
-                    className="modern-input"
-                  />
-                  <span className="input-badge-suffix">
-                    {t('points') || 'pts'} / {progForm.currency_unit || 'DZD'}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Model Informative Helper Callout */}
-          <div className="model-info-banner">
-            <div className="model-info-icon" aria-hidden="true">
-              {progForm.model === 'POINTS' ? <Coins size={16} /> : <Stamp size={16} />}
-            </div>
-            <div className="model-info-text">
-              <strong>
-                {progForm.model === 'POINTS' ? t('pointsModel') : t('stampsModel')}
-              </strong>
-              <span>
-                {progForm.model === 'POINTS'
-                  ? `1 ${progForm.currency_unit || 'DZD'} = ${progForm.points_per_currency || 1} ${t('points')}`
-                  : '1 visit = 1 stamp'}
-              </span>
-            </div>
-          </div>
-
-          {/* Program Description */}
-          <div className="form-field-wrapper field-full-width">
-            <label htmlFor="prog-description" className="form-field-label">
-              <span>{t('programDescription')}</span>
-            </label>
-            <input
-              id="prog-description"
-              value={progForm.description}
-              onChange={(e) => setProgForm({ ...progForm, description: e.target.value })}
-              placeholder="e.g. Earn rewards with every visit"
-              className="modern-input"
-            />
-          </div>
-
-          {/* Modern Status Control Card */}
-          <div className={`program-status-banner ${progForm.is_active ? 'is-active' : 'is-paused'}`}>
-            <div className="status-banner-info">
-              <div className="status-banner-icon" aria-hidden="true">
-                <Power size={18} />
-              </div>
-              <div className="status-banner-copy">
-                <strong>{t('programStatus')}</strong>
-                <p>
-                  {progForm.is_active ? t('programActive') : t('programInactive')}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`program-status-toggle-btn ${progForm.is_active ? 'active-mode' : 'paused-mode'}`}
-              onClick={() => setProgForm({ ...progForm, is_active: !progForm.is_active })}
-              aria-pressed={progForm.is_active}
-            >
-              <Power size={15} />
-              <span>{progForm.is_active ? t('deactivate') : t('activate')}</span>
-            </button>
-          </div>
-
-          {/* Validation & Feedback Notices */}
-          {progMessage && (
-            <div className="config-alert config-alert-success" role="status">
-              <Check size={16} className="alert-icon" />
-              <span>{progMessage}</span>
-            </div>
-          )}
-          {progError && (
-            <div className="config-alert config-alert-error" role="alert">
-              <AlertCircle size={16} className="alert-icon" />
-              <span>{progError}</span>
-            </div>
-          )}
-
-          {/* Action Footer */}
-          <div className="program-config-footer">
-            <button className="primary-button program-save-button" type="submit" disabled={progSaving}>
-              {progSaving ? (
-                <span>{t('saving') || 'Saving...'}</span>
-              ) : (
-                <>
-                  <Save size={15} />
-                  <span>{t('saveProgramSettings')}</span>
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      {/* 2. Customer Offers & Rewards Panel */}
+      {/* Rewards & Offers Header Section */}
       <section className="panel rewards-panel">
         <div className="panel-heading rewards-panel-heading">
           <div>
-            <h2>{t('rewards')}</h2>
-            <p>{t('rewardsConfiguredFor')} {program?.name || t('thisProgram')}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <h2>{t('businessOffers', 'Loyalty Offers')}</h2>
+              <span className="status-pill ready">
+                {isPoints ? <Coins size={12} style={{ marginRight: '4px' }} /> : <Stamp size={12} style={{ marginRight: '4px' }} />}
+                {isPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
+              </span>
+            </div>
+            <p>{t('singleActiveOfferSubtitle', 'Manage your customer loyalty offer. Each business can have one active offer at a time.')}</p>
           </div>
-          <button type="button" className="primary-button add-offer-btn" onClick={() => setShowCreateModal(true)}>
-            <Plus size={16} /> <span>{t('createOffer')}</span>
+          <button
+            type="button"
+            className="primary-button add-offer-btn"
+            onClick={() => {
+              if (activeOffer) {
+                showNotice(
+                  t(
+                    'activeOfferExistsNotice',
+                    'Another offer is currently active. Deactivate it first before creating a new active offer.'
+                  )
+                )
+              } else {
+                setShowCreateModal(true)
+              }
+            }}
+          >
+            <Plus size={16} /> <span>{t('createOffer', 'Create Offer')}</span>
           </button>
         </div>
 
-        {allRewards.length === 0 ? (
-          <div className="panel-empty">
-            <Gift size={24} />
-            <strong>{t('noRewardsYet')}</strong>
-            <span>{t('manageOffersSubtitle')}</span>
-            <button type="button" className="primary-button add-offer-btn" style={{ marginTop: '14px' }} onClick={() => setShowCreateModal(true)}>
-              <Plus size={16} /> <span>{t('createOffer')}</span>
-            </button>
-          </div>
-        ) : (
-          <div className="reward-management-list">
-            {allRewards.map((reward) => {
-              const threshold = isPoints ? (reward.required_points || 0) : (reward.required_stamps || 0)
-              const unit = isPoints ? t('points') : t('stamps')
-              const isExpired = reward.expires_at && new Date(reward.expires_at) <= new Date()
+        {/* Informational constraint callout */}
+        <div className="offer-rule-banner">
+          <Info size={16} className="rule-icon" />
+          <span>
+            {t(
+              'singleOfferRuleNotice',
+              'To keep loyalty simple for your customers, only one offer can be active at a time. Customers accumulate progress toward this active offer.'
+            )}
+          </span>
+        </div>
 
-              return (
-                <article
-                  className={`reward-management-row ${!reward.is_active ? 'is-inactive' : ''}`}
-                  key={reward.id}
-                >
-                  <div className="reward-info-col">
-                    <div className="reward-icon" aria-hidden="true">
-                      <Gift size={18} />
-                    </div>
-                    <div className="reward-text-details">
-                      <div className="reward-title-row">
-                        <strong className="reward-name">{reward.name}</strong>
-                        <span className={`status-pill ${reward.is_active && !isExpired ? 'ready' : ''}`}>
-                          {!reward.is_active ? t('inactive') : isExpired ? t('expired') : t('active')}
-                        </span>
-                      </div>
-                      <p className="reward-description">
-                        {reward.description || t('noDescription')}
-                      </p>
-                      {reward.expires_at && (
-                        <small className={`reward-expiry ${isExpired ? 'is-expired' : ''}`}>
-                          {t('expiresAt')}: {new Date(reward.expires_at).toLocaleDateString()}
-                        </small>
-                      )}
-                    </div>
-                  </div>
+        {/* 1. Active Offer Section */}
+        <div className="active-offer-container" style={{ marginTop: '20px' }}>
+          <h3 className="section-subheading">
+            <CheckCircle size={16} style={{ color: 'var(--coral-deep, #e65100)', marginRight: '6px' }} />
+            {t('currentActiveOffer', 'Current Active Offer')}
+          </h3>
 
-                  <div className="reward-actions-col">
-                    <span className="reward-threshold-badge">
-                      {threshold} {unit}
-                    </span>
+          {activeOffer ? (
+            <div className="active-offer-wrapper">
+              {renderOfferCard(activeOffer, true)}
+            </div>
+          ) : (
+            <div className="panel-empty no-active-offer-empty">
+              <Gift size={28} />
+              <strong>{t('noActiveOffer', 'No active offer running')}</strong>
+              <span>
+                {t(
+                  'createOfferToStart',
+                  'Create an offer or activate an existing one below so your customers can start earning rewards.'
+                )}
+              </span>
+              <button
+                type="button"
+                className="primary-button"
+                style={{ marginTop: '12px' }}
+                onClick={() => setShowCreateModal(true)}
+              >
+                <Plus size={15} /> {t('createOffer', 'Create Offer')}
+              </button>
+            </div>
+          )}
+        </div>
 
-                    <div className="reward-button-group">
-                      <button
-                        type="button"
-                        className="icon-button"
-                        onClick={() => startEditOffer(reward)}
-                        title={t('editOffer')}
-                        aria-label={`${t('editOffer')} - ${reward.name}`}
-                      >
-                        <Edit2 size={15} />
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`icon-button ${reward.is_active ? '' : 'accent-icon'}`}
-                        onClick={() => handleToggleActive(reward)}
-                        title={reward.is_active ? t('deactivate') : t('activate')}
-                        aria-label={`${reward.is_active ? t('deactivate') : t('activate')} - ${reward.name}`}
-                      >
-                        <Power size={15} />
-                      </button>
-
-                      <button
-                        type="button"
-                        className="icon-button danger-icon"
-                        onClick={() => handleDeleteOffer(reward)}
-                        title={t('deleteOffer')}
-                        aria-label={`${t('deleteOffer')} - ${reward.name}`}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              )
-            })}
+        {/* 2. Inactive / Past Offers Section */}
+        {inactiveOffers.length > 0 && (
+          <div className="inactive-offers-container" style={{ marginTop: '32px' }}>
+            <h3 className="section-subheading">
+              {t('pastAndInactiveOffers', 'Past & Inactive Offers')} ({inactiveOffers.length})
+            </h3>
+            <div className="reward-management-list">
+              {inactiveOffers.map((reward) => renderOfferCard(reward, false))}
+            </div>
           </div>
         )}
       </section>
@@ -546,16 +396,16 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
             className="qr-modal reward-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={t('createOffer')}
+            aria-label={t('createOffer', 'Create Offer')}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 className="modal-title">{t('createOffer')}</h3>
+              <h3 className="modal-title">{t('createOffer', 'Create Offer')}</h3>
               <button
                 type="button"
                 className="icon-button modal-close-btn"
                 onClick={() => setShowCreateModal(false)}
-                aria-label={t('close')}
+                aria-label={t('close', 'Close')}
               >
                 <X size={18} />
               </button>
@@ -563,27 +413,29 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
 
             <form onSubmit={handleCreateOffer} className="modal-form">
               <label>
-                <span>{t('offerName')}</span>
+                <span>{t('offerTitle', 'Offer Title')} *</span>
                 <input
                   required
                   value={createForm.name}
                   onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-                  placeholder="e.g. Free Coffee or 20% Discount"
+                  placeholder={t('offerTitlePlaceholder', 'e.g. Free Coffee or 20% Discount')}
                 />
               </label>
 
               <label>
-                <span>{t('offerDescription')}</span>
+                <span>{t('offerDescription', 'Description (What the customer receives)')}</span>
                 <textarea
                   rows={2}
                   value={createForm.description}
                   onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
-                  placeholder="e.g. Valid for any beverage size"
+                  placeholder={t('offerDescPlaceholder', 'e.g. Valid for any large coffee drink')}
                 />
               </label>
 
               <label>
-                <span>{isPoints ? t('requiredPoints') : t('requiredStamps')}</span>
+                <span>
+                  {isPoints ? t('requiredPoints', 'Points Required') : t('requiredStamps', 'Stamps Required')} *
+                </span>
                 <input
                   required
                   type="number"
@@ -595,7 +447,10 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
               </label>
 
               <label>
-                <span>{t('expiresAt')} <small style={{ color: 'var(--muted)' }}>({t('noExpiration')})</small></span>
+                <span>
+                  {t('expiresAt', 'Expiration Date')}{' '}
+                  <small style={{ color: 'var(--muted)' }}>({t('optional', 'Optional')})</small>
+                </span>
                 <input
                   type="date"
                   value={createForm.expires_at}
@@ -607,10 +462,10 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
 
               <div className="modal-form-actions">
                 <button className="secondary-button" type="button" onClick={() => setShowCreateModal(false)}>
-                  {t('close')}
+                  {t('close', 'Close')}
                 </button>
                 <button className="primary-button" type="submit" disabled={creating}>
-                  {creating ? t('saving') || 'Saving...' : t('createOffer')}
+                  {creating ? t('saving', 'Saving...') : t('createOffer', 'Create Offer')}
                 </button>
               </div>
             </form>
@@ -625,16 +480,16 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
             className="qr-modal reward-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={t('editOffer')}
+            aria-label={t('editOffer', 'Edit Offer')}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 className="modal-title">{t('editOffer')}</h3>
+              <h3 className="modal-title">{t('editOffer', 'Edit Offer')}</h3>
               <button
                 type="button"
                 className="icon-button modal-close-btn"
                 onClick={() => setEditingReward(null)}
-                aria-label={t('close')}
+                aria-label={t('close', 'Close')}
               >
                 <X size={18} />
               </button>
@@ -642,7 +497,7 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
 
             <form onSubmit={handleUpdateOffer} className="modal-form">
               <label>
-                <span>{t('offerName')}</span>
+                <span>{t('offerTitle', 'Offer Title')} *</span>
                 <input
                   required
                   value={editForm.name}
@@ -651,7 +506,7 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
               </label>
 
               <label>
-                <span>{t('offerDescription')}</span>
+                <span>{t('offerDescription', 'Description')}</span>
                 <textarea
                   rows={2}
                   value={editForm.description}
@@ -660,7 +515,9 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
               </label>
 
               <label>
-                <span>{isPoints ? t('requiredPoints') : t('requiredStamps')}</span>
+                <span>
+                  {isPoints ? t('requiredPoints', 'Points Required') : t('requiredStamps', 'Stamps Required')} *
+                </span>
                 <input
                   required
                   type="number"
@@ -672,7 +529,10 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
               </label>
 
               <label>
-                <span>{t('expiresAt')}</span>
+                <span>
+                  {t('expiresAt', 'Expiration Date')}{' '}
+                  <small style={{ color: 'var(--muted)' }}>({t('optional', 'Optional')})</small>
+                </span>
                 <input
                   type="date"
                   value={editForm.expires_at}
@@ -687,17 +547,17 @@ export default function RewardsPanel({ program, businessId, accessToken, onProgr
                   checked={editForm.is_active}
                   onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
                 />
-                <span>{t('active')}</span>
+                <span>{t('active', 'Active')}</span>
               </label>
 
               {updateError && <p className="form-error">{updateError}</p>}
 
               <div className="modal-form-actions">
                 <button className="secondary-button" type="button" onClick={() => setEditingReward(null)}>
-                  {t('close')}
+                  {t('close', 'Close')}
                 </button>
                 <button className="primary-button" type="submit" disabled={updating}>
-                  {updating ? t('saving') || 'Saving...' : t('saveChanges')}
+                  {updating ? t('saving', 'Saving...') : t('saveChanges', 'Save Changes')}
                 </button>
               </div>
             </form>

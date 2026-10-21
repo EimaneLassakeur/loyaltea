@@ -44,14 +44,14 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
       if (loginMethod === 'phone') {
         identifier = normalizePhone(phone)
         if (!identifier) {
-          setMessage(t('invalidPhone'))
+          setMessage(t('invalidPhone', 'A valid phone number is required'))
           setBusy(false)
           return
         }
       } else {
         identifier = normalizeEmail(email)
         if (!identifier) {
-          setMessage(t('invalidEmail'))
+          setMessage(t('invalidEmail', 'Please enter a valid email address'))
           setBusy(false)
           return
         }
@@ -60,7 +60,7 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
       const result = await onSignIn(identifier, loginMethod, password)
       if (result.error) {
         if (result.error.code === 'PHONE_PROVIDER_DISABLED') {
-          setMessage(t('phoneProviderDisabled'))
+          setMessage(t('phoneProviderDisabled', 'Phone login unavailable'))
         }
       } else if (result.data?.session) {
         handleSuccessfulAuth()
@@ -69,31 +69,41 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
       return
     }
 
-    // Sign-up mode
-    const normEmail = normalizeEmail(email)
-    if (!normEmail) {
-      setMessage(t('invalidEmail'))
+    // Sign-up mode: Full name req, Phone req, Email opt, Password req
+    const normPhone = normalizePhone(phone)
+    if (!normPhone) {
+      setMessage(t('invalidPhone', 'A valid phone number is required'))
       setBusy(false)
       return
     }
-    const normPhone = phone ? normalizePhone(phone) : ''
-    if (phone && !normPhone) {
-      setMessage(t('invalidPhone'))
+    const normEmail = email ? normalizeEmail(email) : ''
+    if (email && !normEmail) {
+      setMessage(t('invalidEmail', 'Please enter a valid email address'))
+      setBusy(false)
+      return
+    }
+    if (!fullName || !fullName.trim()) {
+      setMessage(t('fullNameRequired', 'Full name is required'))
+      setBusy(false)
+      return
+    }
+    if (!password || password.length < 8) {
+      setMessage(t('passwordMinLength', 'Password must be at least 8 characters'))
       setBusy(false)
       return
     }
 
     const result = await onSignUp({
-      email: normEmail,
-      phone: normPhone || undefined,
+      phone: normPhone,
+      email: normEmail || undefined,
       password,
       fullName: fullName.trim(),
       role,
     })
 
-    if (!result.error && !result.data?.session) {
-      setMessage(t('checkVerification'))
-    } else if (!result.error && result.data?.session) {
+    if (result.error) {
+      setMessage(result.error.message)
+    } else if (result.data?.session) {
       handleSuccessfulAuth()
     }
     setBusy(false)
@@ -115,37 +125,70 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
       <PreferencesControls />
       <div className="auth-card">
         <div className="brand-row auth-brand">
-          <div className="brand-mark"><Coffee size={18} strokeWidth={2.5} /></div>
+          <div className="brand-mark">
+            <Coffee size={18} strokeWidth={2.5} />
+          </div>
           <span>loyaltea</span>
         </div>
-        <p className="eyebrow">{t('digitalLoyalty')}</p>
-        <h1>{mode === 'sign-in' ? t('welcomeBack') : t('signUp')}</h1>
-        <p className="heading-copy">{mode === 'sign-in' ? t('signInCopy') : t('collectRewards')}</p>
+        <p className="eyebrow">{t('digitalLoyalty', 'Digital Loyalty Platform')}</p>
+        <h1>{mode === 'sign-in' ? t('welcomeBack', 'Welcome back') : t('signUp', 'Create your Account')}</h1>
+        <p className="heading-copy">
+          {mode === 'sign-in' ? t('signInCopy', 'Sign in to access your loyalty wallet') : t('collectRewards', 'Collect stamps and earn rewards')}
+        </p>
+
         <form onSubmit={submit}>
           {mode === 'sign-up' && (
             <>
               <label>
-                {t('fullName')}
-                <input required value={fullName} onChange={(event) => setFullName(event.target.value)} />
+                <span>{t('fullName', 'Full Name')} *</span>
+                <input
+                  required
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  placeholder="e.g. Sarah Connor"
+                  autoComplete="name"
+                />
               </label>
+
               <label>
-                {t('accountType')}
-                <input value={t('customer')} readOnly />
+                <span>{t('phone', 'Phone Number')} *</span>
+                <input
+                  required
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="+213..."
+                  autoComplete="tel"
+                />
+              </label>
+
+              <label>
+                <span>
+                  {t('email', 'Email Address')}{' '}
+                  <small style={{ color: 'var(--muted)' }}>({t('optional', 'Optional')})</small>
+                </span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="name@example.com"
+                  autoComplete="email"
+                />
               </label>
             </>
           )}
 
           {mode === 'sign-in' && (
             <div className="login-method-control">
-              <span className="login-method-label">{t('loginMethod')}</span>
-              <div className="auth-method-switch" role="group" aria-label={t('loginMethod')}>
+              <span className="login-method-label">{t('loginMethod', 'Login Method')}</span>
+              <div className="auth-method-switch" role="group" aria-label={t('loginMethod', 'Login Method')}>
                 <button
                   type="button"
                   aria-pressed={loginMethod === 'email'}
                   className={loginMethod === 'email' ? 'active' : ''}
                   onClick={() => { setLoginMethod('email'); setMessage(''); onClearError() }}
                 >
-                  {t('emailLogin')}
+                  {t('emailLogin', 'Email Address')}
                 </button>
                 <button
                   type="button"
@@ -153,32 +196,31 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
                   className={loginMethod === 'phone' ? 'active' : ''}
                   onClick={() => { setLoginMethod('phone'); setMessage(''); onClearError() }}
                 >
-                  {t('phoneLogin')}
+                  {t('phoneLogin', 'Phone Number')}
                 </button>
               </div>
-              <small className="login-method-hint">{loginMethod === 'phone' ? t('phoneLogin') : t('emailLogin')}</small>
             </div>
           )}
 
-          {(mode === 'sign-up' || loginMethod === 'email') && (
+          {mode === 'sign-in' && loginMethod === 'email' && (
             <label>
-              {t('email')}
+              <span>{t('email', 'Email Address')} *</span>
               <input
                 required
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
+                placeholder="name@example.com"
               />
             </label>
           )}
 
-          {(mode === 'sign-up' || loginMethod === 'phone') && (
+          {mode === 'sign-in' && loginMethod === 'phone' && (
             <label>
-              {t('phone')}
-              {mode === 'sign-up' && <small> ({t('optional')})</small>}
+              <span>{t('phone', 'Phone Number')} *</span>
               <input
-                required={mode === 'sign-in' && loginMethod === 'phone'}
+                required
                 type="tel"
                 value={phone}
                 onChange={(event) => setPhone(event.target.value)}
@@ -189,10 +231,10 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
           )}
 
           <label>
-            {t('password')}
+            <span>{t('password', 'Password')} *</span>
             <input
               required
-              minLength="8"
+              minLength={8}
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -202,14 +244,14 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
 
           {(error || message) && <p className={error ? 'form-error' : 'form-message'}>{error || message}</p>}
 
-          <button className="primary-button auth-submit" disabled={busy}>
-            {busy ? t('pleaseWait') : mode === 'sign-in' ? t('signIn') : t('signUp')}
+          <button className="primary-button auth-submit" disabled={busy} style={{ minHeight: '44px', marginTop: '14px' }}>
+            {busy ? t('pleaseWait', 'Please wait...') : mode === 'sign-in' ? t('signIn', 'Sign In') : t('signUp', 'Create Account')}
           </button>
         </form>
 
         {publicSignupEnabled && (
-          <button className="text-button auth-switch" onClick={switchMode}>
-            {mode === 'sign-in' ? t('signUp') : t('signIn')}
+          <button className="text-button auth-switch" onClick={switchMode} style={{ marginTop: '16px' }}>
+            {mode === 'sign-in' ? t('noAccountSignUp', "Don't have an account? Sign up") : t('alreadyHaveAccountSignIn', 'Already have an account? Sign in')}
           </button>
         )}
       </div>

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Coffee, Gift } from 'lucide-react'
+import { CheckCircle2, Coffee, Gift } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { getPublicBusiness, getPublicProgram, joinProgram } from '../../services/dashboardService'
 import { apiFetch } from '../../lib/api'
 import { normalizeEmail, normalizePhone } from '../../lib/authUtils'
 import PreferencesControls from '../PreferencesControls'
 import { usePreferences } from '../../contexts/usePreferences'
-
-const publicSignupEnabled = import.meta.env.VITE_PUBLIC_SIGNUP_ENABLED === 'true'
 
 export default function JoinScreen({ businessSlug, programId, session, profile, onSignIn, onSignUp, onClearError }) {
   const { t } = usePreferences()
@@ -17,16 +16,17 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
   const [joined, setJoined] = useState(null)
   const [alreadyEnrolled, setAlreadyEnrolled] = useState(false)
   const [error, setError] = useState('')
-  const [mode, setMode] = useState('sign-in')
-  const [loginMethod, setLoginMethod] = useState('email')
+  const [mode, setMode] = useState('sign-up') // Default to sign-up for new customers (Case A)
+  const [loginMethod, setLoginMethod] = useState('phone')
   const [form, setForm] = useState({ phone: '', email: '', password: '', fullName: '' })
   const [loadError, setLoadError] = useState(null)
-  const [message, setMessage] = useState('')
 
-  // Preserve the return destination in case user navigates away to full login
+  // Preserve the return destination
   useEffect(() => {
     try {
-      sessionStorage.setItem('loyaltea.return_to', window.location.pathname)
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/join/')) {
+        sessionStorage.setItem('loyaltea.return_to', window.location.pathname)
+      }
     } catch {
       // Ignore sessionStorage errors
     }
@@ -49,33 +49,39 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
   }, [businessSlug, programId])
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/join/')) {
-      sessionStorage.setItem('loyaltea.return_to', window.location.pathname)
-    }
     loadData()
   }, [loadData])
 
-  // Check if authenticated customer is already enrolled in this loyalty program
+  // Case C: Authenticated customer auto-join and card retrieval
   useEffect(() => {
-    if (!session?.access_token || !program?.id) return
+    if (!session?.access_token || !program?.id || alreadyEnrolled || joined) return
     let active = true
+
     apiFetch('/api/customer/memberships', session.access_token)
-      .then((result) => {
+      .then(async (result) => {
         if (!active) return
         const memberships = result?.memberships || []
         const existing = memberships.find((m) => m.program_id === program.id && m.is_active)
         if (existing) {
           setAlreadyEnrolled(true)
           setJoined(existing)
+        } else if (profile?.role === 'CUSTOMER' && acceptingMemberships) {
+          try {
+            const joinRes = await joinProgram(session.access_token, program.id)
+            if (active) setJoined(joinRes.membership)
+          } catch (joinErr) {
+            if (joinErr.status === 409 || joinErr.code === 'MEMBERSHIP_EXISTS') {
+              if (active) setAlreadyEnrolled(true)
+            }
+          }
         }
       })
-      .catch(() => {
-        // Membership lookup failure is non-fatal; enrollment attempt will handle state
-      })
+      .catch(() => {})
+
     return () => {
       active = false
     }
-  }, [session?.access_token, program?.id])
+  }, [session?.access_token, program?.id, profile?.role, acceptingMemberships, alreadyEnrolled, joined])
 
   const retryLoad = () => {
     setLoading(true)
@@ -88,12 +94,11 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
   const handleDirectJoin = async () => {
     if (!session?.access_token || !program?.id) return
     if (!acceptingMemberships) {
-      setError(t('businessNotAccepting'))
+      setError(t('businessNotAccepting', 'This business is currently not accepting new loyalty members.'))
       return
     }
     setBusy(true)
     setError('')
-    setMessage('')
     try {
       const result = await joinProgram(session.access_token, program.id)
       setJoined(result.membership)
@@ -102,7 +107,7 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
         setAlreadyEnrolled(true)
       } else if (requestError.status === 403 || requestError.code === 'BUSINESS_SUBSCRIPTION_INACTIVE') {
         setAcceptingMemberships(false)
-        setError(t('businessNotAccepting'))
+        setError(t('businessNotAccepting', 'This business is currently not accepting new loyalty members.'))
       } else {
         setError(requestError.message)
       }
@@ -115,63 +120,69 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
   const handleAuthAndJoin = async (event) => {
     event.preventDefault()
     if (!acceptingMemberships) {
-      setError(t('businessNotAccepting'))
+      setError(t('businessNotAccepting', 'This business is currently not accepting new loyalty members.'))
       return
     }
     setBusy(true)
     setError('')
-    setMessage('')
     onClearError()
 
     try {
       let activeSession = session
       if (!activeSession) {
         if (mode === 'sign-in') {
+          // Case B: Returning customer login
           let identifier = ''
           if (loginMethod === 'phone') {
             identifier = normalizePhone(form.phone)
             if (!identifier) {
-              setError(t('invalidPhone'))
+              setError(t('invalidPhone', 'A valid phone number is required'))
               setBusy(false)
               return
             }
           } else {
             identifier = normalizeEmail(form.email)
             if (!identifier) {
-              setError(t('invalidEmail'))
+              setError(t('invalidEmail', 'Please enter a valid email address'))
               setBusy(false)
               return
             }
           }
           const loginResult = await onSignIn(identifier, loginMethod, form.password)
           if (loginResult.error) {
-            if (loginResult.error.code === 'PHONE_PROVIDER_DISABLED') {
-              setError(t('phoneProviderDisabled'))
-            } else {
-              setError(loginResult.error.message)
-            }
+            setError(loginResult.error.message)
             setBusy(false)
             return
           }
           activeSession = loginResult.data?.session
         } else {
-          // Sign-up
-          const normEmail = normalizeEmail(form.email)
-          if (!normEmail) {
-            setError(t('invalidEmail'))
+          // Case A: New customer registration
+          const normPhone = normalizePhone(form.phone)
+          if (!normPhone) {
+            setError(t('invalidPhone', 'A valid phone number is required'))
             setBusy(false)
             return
           }
-          const normPhone = form.phone ? normalizePhone(form.phone) : ''
-          if (form.phone && !normPhone) {
-            setError(t('invalidPhone'))
+          const normEmail = form.email ? normalizeEmail(form.email) : ''
+          if (form.email && !normEmail) {
+            setError(t('invalidEmail', 'Please enter a valid email address'))
+            setBusy(false)
+            return
+          }
+          if (!form.fullName || !form.fullName.trim()) {
+            setError(t('fullNameRequired', 'Full name is required'))
+            setBusy(false)
+            return
+          }
+          if (!form.password || form.password.length < 8) {
+            setError(t('passwordMinLength', 'Password must be at least 8 characters'))
             setBusy(false)
             return
           }
 
           const signupResult = await onSignUp({
-            email: normEmail,
-            phone: normPhone || undefined,
+            phone: normPhone,
+            email: normEmail || undefined,
             password: form.password,
             fullName: form.fullName.trim(),
             role: 'CUSTOMER',
@@ -184,18 +195,14 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
           }
 
           activeSession = signupResult.data?.session
-          if (!activeSession) {
-            setMessage(t('checkVerification'))
-            setBusy(false)
-            return
-          }
         }
       }
 
       if (!activeSession) {
-        throw new Error(t('checkVerification'))
+        throw new Error(t('couldNotCreateSession', 'Could not establish session. Please sign in.'))
       }
 
+      // Complete program enrollment
       const result = await joinProgram(activeSession.access_token, program.id)
       setJoined(result.membership)
     } catch (requestError) {
@@ -203,7 +210,7 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
         setAlreadyEnrolled(true)
       } else if (requestError.status === 403 || requestError.code === 'BUSINESS_SUBSCRIPTION_INACTIVE') {
         setAcceptingMemberships(false)
-        setError(t('businessNotAccepting'))
+        setError(t('businessNotAccepting', 'This business is currently not accepting new loyalty members.'))
       } else {
         setError(requestError.message)
       }
@@ -212,17 +219,17 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
     }
   }
 
-  if (loading) return <div className="app-state"><strong>{t('loadingProgram')}</strong></div>
+  if (loading) return <div className="app-state"><strong>{t('loadingProgram', 'Loading loyalty program...')}</strong></div>
   if (!program) {
     const isNotFound = loadError?.status === 404 || loadError?.code === 'BUSINESS_NOT_FOUND' || loadError?.code === 'NO_ACTIVE_PROGRAM'
     const isBusinessNotFound = loadError?.code === 'BUSINESS_NOT_FOUND'
     return (
       <div className="app-state">
-        <strong>{isBusinessNotFound ? t('businessNotFound') : isNotFound ? t('programUnavailable') : t('couldNotLoadProgram')}</strong>
-        <p>{isBusinessNotFound ? t('businessNotFound') : isNotFound ? t('programUnavailable') : t('serverErrorTryAgain')}</p>
+        <strong>{isBusinessNotFound ? t('businessNotFound', 'Business not found') : isNotFound ? t('programUnavailable', 'Program unavailable') : t('couldNotLoadProgram', 'Could not load program')}</strong>
+        <p>{isBusinessNotFound ? t('businessNotFound', 'Business not found') : isNotFound ? t('programUnavailable', 'Program unavailable') : t('serverErrorTryAgain', 'Please try again')}</p>
         {!isNotFound && (
           <button className="primary-button" style={{ marginTop: '12px' }} onClick={retryLoad}>
-            {t('tryAgain')}
+            {t('tryAgain', 'Try again')}
           </button>
         )}
       </div>
@@ -230,63 +237,86 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
   }
 
   const isRoleRestricted = session && profile?.role && profile.role !== 'CUSTOMER'
+  const activeOffer = (program.rewards || []).find((r) => r.is_active)
+  const isPoints = program.model === 'POINTS'
+  const unit = isPoints ? t('points', 'points') : t('stamps', 'stamps')
 
   return (
     <main className="join-page">
       <PreferencesControls />
       <div className="join-card">
         <div className="brand-row auth-brand">
-          <div className="brand-mark"><Coffee size={18} strokeWidth={2.5} /></div>
+          <div className="brand-mark">
+            <Coffee size={18} strokeWidth={2.5} />
+          </div>
           <span>loyaltea</span>
         </div>
-        <p className="eyebrow">{t('joinCommunity')}</p>
+        <p className="eyebrow">{t('joinCommunity', 'Customer Loyalty Pass')}</p>
         <h1>{program.businesses?.name}</h1>
         <p className="join-program-name">{program.name}</p>
-        <p className="heading-copy">{program.description || t('collectRewards')}</p>
 
-        <div className="join-reward-list">
-          {(program.rewards || []).filter((reward) => reward.is_active).map((reward) => (
-            <div className="join-reward" key={reward.id}>
-              <Gift size={18} />
-              <div>
-                <strong>{reward.name}</strong>
-                <small>
-                  {t('unlockAt')} {program.model === 'STAMPS' ? reward.required_stamps : reward.required_points} {program.model === 'STAMPS' ? t('stamps') : t('points')}
-                </small>
-              </div>
+        {/* Active Offer Preview */}
+        {activeOffer ? (
+          <div className="join-active-offer-card">
+            <div className="join-offer-icon">
+              <Gift size={20} />
             </div>
-          ))}
-        </div>
+            <div className="join-offer-info">
+              <strong>{activeOffer.name}</strong>
+              <p>{activeOffer.description || t('collectPointsForOffer', 'Earn points with each purchase to unlock this reward')}</p>
+              <span className="join-offer-threshold">
+                {isPoints ? activeOffer.required_points : activeOffer.required_stamps} {unit} {t('toUnlock', 'required to unlock')}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="heading-copy">{program.description || t('collectRewards', 'Collect stamps and earn rewards')}</p>
+        )}
 
+        {/* Case C & Result: Joined or Already Enrolled */}
         {joined || alreadyEnrolled ? (
           <div className="join-result-container">
-            <div className="form-message join-success">
-              {joined ? t('joinSuccess') : t('alreadyEnrolled')}
+            <div className="form-message join-success" style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+              <CheckCircle2 size={18} />
+              <span>{joined ? t('joinSuccess', "You're enrolled in this loyalty program!") : t('alreadyEnrolled', 'You are already enrolled in this loyalty program!')}</span>
             </div>
-            {joined && (
-              <p className="heading-copy" style={{ textAlign: 'center', marginTop: '8px' }}>
-                {program.model === 'STAMPS' ? `${joined.stamps_balance || 0} ${t('stamps')}` : `${joined.points_balance || 0} ${t('points')}`}
-              </p>
+
+            {joined?.secure_token && (
+              <div className="join-qr-preview" style={{ margin: '16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <QRCodeSVG
+                  value={joined.secure_token}
+                  size={140}
+                  level="M"
+                  includeMargin
+                  bgColor="#ffffff"
+                  fgColor="#1d3832"
+                />
+                <span className="qr-touch-label" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--muted)' }}>
+                  {t('showAtCounter', 'Show at counter')}
+                </span>
+              </div>
             )}
+
             <button
               type="button"
               className="primary-button"
+              style={{ width: '100%', minHeight: '44px', marginTop: '12px' }}
               onClick={() => window.location.assign('/')}
             >
-              {t('viewLoyaltyWallet')}
+              {t('viewLoyaltyWallet', 'View in Loyalty Wallet')}
             </button>
           </div>
         ) : session ? (
-          /* Authenticated customer join flow: No redundant credentials asked */
+          /* Authenticated customer ready to join */
           <div className="join-action-box">
             {!acceptingMemberships && (
               <div className="form-message form-message-warning" role="alert">
-                {t('businessNotAccepting')}
+                {t('businessNotAccepting', 'This business is currently not accepting new loyalty members.')}
               </div>
             )}
             {isRoleRestricted && (
               <div className="form-message form-message-warning" role="alert">
-                {t('customerRoleRequired')}
+                {t('customerRoleRequired', 'Only customer accounts can enroll in loyalty programs.')}
               </div>
             )}
             {error && <p className="form-error">{error}</p>}
@@ -296,121 +326,166 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
               disabled={busy || !acceptingMemberships || isRoleRestricted}
               onClick={handleDirectJoin}
             >
-              {busy ? t('joining') : t('joinProgram')}
+              {busy ? t('joining', 'Joining...') : t('joinProgram', 'Join Loyalty Program')}
             </button>
           </div>
         ) : (
-          /* Unauthenticated visitor flow: Seamless inline auth + enrollment */
-          <form onSubmit={handleAuthAndJoin}>
+          /* Unauthenticated visitor flow: Case A (Sign-up) or Case B (Sign-in) */
+          <form onSubmit={handleAuthAndJoin} className="join-auth-form">
             <div className="join-form-header">
-              <h3>{mode === 'sign-in' ? t('signInToJoin') : t('signUpToJoin')}</h3>
+              <div className="auth-tab-switch" role="group">
+                <button
+                  type="button"
+                  className={`auth-tab-btn ${mode === 'sign-up' ? 'active' : ''}`}
+                  onClick={() => { setMode('sign-up'); setError(''); onClearError() }}
+                >
+                  {t('newCustomerSignUp', 'New Customer Sign Up')}
+                </button>
+                <button
+                  type="button"
+                  className={`auth-tab-btn ${mode === 'sign-in' ? 'active' : ''}`}
+                  onClick={() => { setMode('sign-in'); setError(''); onClearError() }}
+                >
+                  {t('alreadyHaveAccount', 'Already a Member? Sign In')}
+                </button>
+              </div>
             </div>
 
             {!acceptingMemberships && (
               <div className="form-message form-message-warning" role="alert">
-                {t('businessNotAccepting')}
+                {t('businessNotAccepting', 'This business is currently not accepting new loyalty members.')}
               </div>
             )}
 
-            {mode === 'sign-up' && (
-              <label>
-                {t('fullName')}
-                <input
-                  required
-                  value={form.fullName}
-                  onChange={(event) => setForm({ ...form, fullName: event.target.value })}
-                />
-              </label>
-            )}
+            {/* Case A: Sign up fields (Full name req, Phone req, Email opt, Password req) */}
+            {mode === 'sign-up' ? (
+              <>
+                <label>
+                  <span>{t('fullName', 'Full Name')} *</span>
+                  <input
+                    required
+                    value={form.fullName}
+                    onChange={(event) => setForm({ ...form, fullName: event.target.value })}
+                    placeholder="e.g. Sarah Connor"
+                    autoComplete="name"
+                  />
+                </label>
 
-            {mode === 'sign-in' && (
-              <div className="login-method-control">
-                <span className="login-method-label">{t('loginMethod')}</span>
-                <div className="auth-method-switch" role="group" aria-label={t('loginMethod')}>
-                  <button
-                    type="button"
-                    aria-pressed={loginMethod === 'email'}
-                    className={loginMethod === 'email' ? 'active' : ''}
-                    onClick={() => { setLoginMethod('email'); setError(''); onClearError() }}
-                  >
-                    {t('emailLogin')}
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={loginMethod === 'phone'}
-                    className={loginMethod === 'phone' ? 'active' : ''}
-                    onClick={() => { setLoginMethod('phone'); setError(''); onClearError() }}
-                  >
-                    {t('phoneLogin')}
-                  </button>
+                <label>
+                  <span>{t('phone', 'Phone Number')} *</span>
+                  <input
+                    required
+                    type="tel"
+                    value={form.phone}
+                    onChange={(event) => setForm({ ...form, phone: event.target.value })}
+                    placeholder="+213..."
+                    autoComplete="tel"
+                  />
+                </label>
+
+                <label>
+                  <span>
+                    {t('email', 'Email Address')}{' '}
+                    <small style={{ color: 'var(--muted)' }}>({t('optional', 'Optional')})</small>
+                  </span>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(event) => setForm({ ...form, email: event.target.value })}
+                    placeholder="name@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+
+                <label>
+                  <span>{t('password', 'Password')} (min 8 chars) *</span>
+                  <input
+                    required
+                    minLength={8}
+                    type="password"
+                    value={form.password}
+                    onChange={(event) => setForm({ ...form, password: event.target.value })}
+                    autoComplete="new-password"
+                  />
+                </label>
+              </>
+            ) : (
+              /* Case B: Returning customer sign-in */
+              <>
+                <div className="login-method-control">
+                  <div className="auth-method-switch" role="group" aria-label={t('loginMethod', 'Login Method')}>
+                    <button
+                      type="button"
+                      aria-pressed={loginMethod === 'phone'}
+                      className={loginMethod === 'phone' ? 'active' : ''}
+                      onClick={() => { setLoginMethod('phone'); setError(''); onClearError() }}
+                    >
+                      {t('phoneLogin', 'Phone Number')}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={loginMethod === 'email'}
+                      className={loginMethod === 'email' ? 'active' : ''}
+                      onClick={() => { setLoginMethod('email'); setError(''); onClearError() }}
+                    >
+                      {t('emailLogin', 'Email Address')}
+                    </button>
+                  </div>
                 </div>
-              </div>
+
+                {loginMethod === 'phone' ? (
+                  <label>
+                    <span>{t('phone', 'Phone Number')} *</span>
+                    <input
+                      required
+                      type="tel"
+                      value={form.phone}
+                      onChange={(event) => setForm({ ...form, phone: event.target.value })}
+                      placeholder="+213..."
+                      autoComplete="tel"
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    <span>{t('email', 'Email Address')} *</span>
+                    <input
+                      required
+                      type="email"
+                      value={form.email}
+                      onChange={(event) => setForm({ ...form, email: event.target.value })}
+                      placeholder="name@example.com"
+                      autoComplete="email"
+                    />
+                  </label>
+                )}
+
+                <label>
+                  <span>{t('password', 'Password')} *</span>
+                  <input
+                    required
+                    type="password"
+                    value={form.password}
+                    onChange={(event) => setForm({ ...form, password: event.target.value })}
+                    autoComplete="current-password"
+                  />
+                </label>
+              </>
             )}
 
-            {(mode === 'sign-up' || loginMethod === 'email') && (
-              <label>
-                {t('email')}
-                <input
-                  required
-                  type="email"
-                  value={form.email}
-                  onChange={(event) => setForm({ ...form, email: event.target.value })}
-                  autoComplete="email"
-                />
-              </label>
-            )}
-
-            {(mode === 'sign-up' || loginMethod === 'phone') && (
-              <label>
-                {t('phone')}
-                {mode === 'sign-up' && <small> ({t('optional')})</small>}
-                <input
-                  required={mode === 'sign-in' && loginMethod === 'phone'}
-                  type="tel"
-                  value={form.phone}
-                  onChange={(event) => setForm({ ...form, phone: event.target.value })}
-                  placeholder="+213..."
-                  autoComplete="tel"
-                />
-              </label>
-            )}
-
-            <label>
-              {t('password')}
-              <input
-                required
-                minLength="8"
-                type="password"
-                value={form.password}
-                onChange={(event) => setForm({ ...form, password: event.target.value })}
-                autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-              />
-            </label>
-
-            {(error || message) && <p className={error ? 'form-error' : 'form-message'}>{error || message}</p>}
+            {error && <p className="form-error">{error}</p>}
 
             <button
               className="primary-button auth-submit"
               disabled={busy || !acceptingMemberships}
+              style={{ minHeight: '46px', marginTop: '16px' }}
             >
-              {busy ? t('joining') : mode === 'sign-in' ? t('signInAndJoin') : t('createAccountAndJoin')}
+              {busy
+                ? t('pleaseWait', 'Please wait...')
+                : mode === 'sign-up'
+                ? t('signUpAndJoin', 'Sign Up & Join')
+                : t('signInAndJoin', 'Sign In & Join')}
             </button>
           </form>
-        )}
-
-        {!session && publicSignupEnabled && !joined && !alreadyEnrolled && (
-          <button
-            type="button"
-            className="text-button auth-switch"
-            onClick={() => {
-              setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')
-              setError('')
-              setMessage('')
-              onClearError()
-            }}
-          >
-            {mode === 'sign-in' ? t('newCustomerAccount') : t('existingCustomerAccount')}
-          </button>
         )}
       </div>
     </main>

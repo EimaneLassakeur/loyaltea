@@ -252,7 +252,7 @@ export default function DashboardPage({ session, profile, onSignOut }) {
           ) : <>
             {(activePage === 'Overview' || activePage === 'Customers') && <EmployeeOperationsPanel accessToken={session.access_token} program={dashboard.program} onAddLoyalty={addLoyalty} onRedeem={redeemCustomerReward} />}
             <StatsGrid values={dashboard.stats} />
-            {(activePage === 'Overview' || activePage === 'Analytics') && <section className="content-grid"><PerformancePanel period={period} onPeriodChange={setPeriod} performance={dashboard.performance} />{activePage === 'Overview' && <ActivityPanel activities={activities} />}</section>}
+            {(activePage === 'Overview' || activePage === 'Analytics') && <section className="content-grid"><PerformancePanel period={period} onPeriodChange={setPeriod} performance={dashboard.performance} />{activePage === 'Overview' && <ActivityPanel activities={activities} accessToken={session.access_token} businessId={dashboard.business?.id} />}</section>}
             {(activePage === 'Overview' || activePage === 'Customers') && <CustomersPanel customers={filteredCustomers} program={dashboard.program} search={search} onSearchChange={setSearch} earnAmount={earnAmount} onEarnAmountChange={setEarnAmount} busyMembership={busyMembership} onAddLoyalty={addLoyalty} onRedeem={redeemCustomerReward} />}
           </>}
           <footer className="page-footer">

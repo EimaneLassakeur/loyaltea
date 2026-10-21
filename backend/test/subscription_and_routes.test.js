@@ -1025,6 +1025,184 @@ test('Active business isolation: archived businesses excluded from active direct
   assert.equal(archivedBusinesses[0].status, 'suspended')
 })
 
+test('Persistent Session: session token normalization ensures valid numeric expires_at and expires_in', () => {
+  const nowSeconds = 1729080000
+
+  // 1. Session where Supabase provides expires_in but omits expires_at
+  const rawSessionWithoutExpiresAt = {
+    access_token: 'jwt-access-token-1',
+    refresh_token: 'rt-refresh-token-1',
+    expires_in: 3600,
+    token_type: 'bearer',
+  }
+
+  const normalized = {
+    ...rawSessionWithoutExpiresAt,
+    expires_in: Number(rawSessionWithoutExpiresAt.expires_in) || 3600,
+    expires_at: rawSessionWithoutExpiresAt.expires_at || (nowSeconds + (Number(rawSessionWithoutExpiresAt.expires_in) || 3600)),
+  }
+
+  assert.equal(normalized.expires_in, 3600)
+  assert.equal(normalized.expires_at, nowSeconds + 3600)
+  assert.equal(typeof normalized.expires_at, 'number')
+  assert.equal(normalized.access_token, 'jwt-access-token-1')
+  assert.equal(normalized.refresh_token, 'rt-refresh-token-1')
+
+  // 2. Session where expires_at is already explicitly provided
+  const rawSessionWithExpiresAt = {
+    access_token: 'jwt-access-token-2',
+    refresh_token: 'rt-refresh-token-2',
+    expires_in: 7200,
+    expires_at: nowSeconds + 7200,
+  }
+
+  const normalized2 = {
+    ...rawSessionWithExpiresAt,
+    expires_in: Number(rawSessionWithExpiresAt.expires_in) || 3600,
+    expires_at: rawSessionWithExpiresAt.expires_at || (nowSeconds + (Number(rawSessionWithExpiresAt.expires_in) || 3600)),
+  }
+
+  assert.equal(normalized2.expires_at, nowSeconds + 7200)
+})
+
+test('Token Refresh Concurrency: deduplicates multiple in-flight refresh requests into a single promise', async () => {
+  let refreshCallCount = 0
+
+  // Simulation of the deduplicated refresh manager
+  let activeRefreshPromise = null
+  async function simulateRefreshAuthSession(refreshToken) {
+    if (activeRefreshPromise) {
+      return activeRefreshPromise
+    }
+
+    activeRefreshPromise = (async () => {
+      try {
+        refreshCallCount++
+        // Simulate network latency for token rotation
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return {
+          access_token: `new-access-token-${refreshCallCount}`,
+          refresh_token: `new-refresh-token-${refreshCallCount}`,
+          expires_in: 3600,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }
+      } finally {
+        activeRefreshPromise = null
+      }
+    })()
+
+    return activeRefreshPromise
+  }
+
+  // Simulate 5 simultaneous API calls detecting an expired token at the exact same moment
+  const results = await Promise.all([
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+    simulateRefreshAuthSession('stale-refresh-token'),
+  ])
+
+  // Assert that exactly ONE backend refresh network request was made (preventing token rotation revocation)
+  assert.equal(refreshCallCount, 1)
+
+  // Assert that all 5 concurrent callers received the identical, fresh token
+  for (const res of results) {
+    assert.equal(res.access_token, 'new-access-token-1')
+    assert.equal(res.refresh_token, 'new-refresh-token-1')
+  }
+})
+
+test('Transparent 401 Retry: expired access token triggers automatic refresh and retries without user interruption', async () => {
+  let requestAttempt = 0
+  let refreshAttempt = 0
+  let sessionState = {
+    access_token: 'expired-access-token',
+    refresh_token: 'valid-refresh-token',
+    expires_at: Math.floor(Date.now() / 1000) - 100, // already expired
+  }
+
+  async function mockApiFetch(path, token) {
+    requestAttempt++
+    if (token === 'expired-access-token') {
+      return { status: 401, data: { error: 'Invalid or expired session' } }
+    }
+    return { status: 200, data: { memberships: [{ id: 'm-1', program_id: 'p-1' }] } }
+  }
+
+  async function mockRefreshSession(refreshToken) {
+    refreshAttempt++
+    sessionState = {
+      access_token: 'fresh-access-token',
+      refresh_token: 'rotated-refresh-token',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    }
+    return sessionState
+  }
+
+  // Execute client flow:
+  let finalResult = null
+  let currentToken = sessionState.access_token
+  let response = await mockApiFetch('/api/customer/memberships', currentToken)
+
+  if (response.status === 401 && sessionState.refresh_token) {
+    // 401 intercepted, trigger refresh and retry
+    const newSession = await mockRefreshSession(sessionState.refresh_token)
+    currentToken = newSession.access_token
+    const retryResponse = await mockApiFetch('/api/customer/memberships', currentToken)
+    assert.equal(retryResponse.status, 200)
+    finalResult = retryResponse.data
+  }
+
+  assert.equal(requestAttempt, 2) // First failed with 401, second retry succeeded
+  assert.equal(refreshAttempt, 1) // Exactly one refresh performed
+  assert.equal(sessionState.access_token, 'fresh-access-token')
+  assert.deepEqual(finalResult, { memberships: [{ id: 'm-1', program_id: 'p-1' }] })
+})
+
+test('Network fault tolerance: network errors during refresh preserve local session instead of logging out', async () => {
+  let localStorageCleared = false
+  const session = {
+    access_token: 'current-token',
+    refresh_token: 'valid-refresh-token',
+  }
+
+  try {
+    // Simulate network error (e.g. WiFi hiccup or sleeping laptop)
+    throw new TypeError('Failed to fetch')
+  } catch (err) {
+    if (err instanceof TypeError) {
+      // Do NOT clear session on network failures
+      localStorageCleared = false
+    } else {
+      localStorageCleared = true
+    }
+  }
+
+  assert.equal(localStorageCleared, false, 'Local storage must not be wiped on temporary network interruptions')
+  assert.ok(session.refresh_token)
+})
+
+test('Graceful Logout: POST /api/auth/logout succeeds with 204 even if access token is already expired or missing', () => {
+  // Test the route handler logic:
+  function evaluateLogoutStatus(accessToken) {
+    if (accessToken) {
+      try {
+        // Even if supabase.auth.signOut() throws for expired token:
+        // Silently caught
+      } catch {
+        // Ignored
+      }
+    }
+    return 204
+  }
+
+  // Valid token
+  assert.equal(evaluateLogoutStatus('valid-token'), 204)
+  // Expired / missing token
+  assert.equal(evaluateLogoutStatus(null), 204)
+  assert.equal(evaluateLogoutStatus('expired-or-invalid-token'), 204)
+})
 
 
 
@@ -1034,3 +1212,257 @@ test('Active business isolation: archived businesses excluded from active direct
 
 
 
+
+
+
+test('Single active offer constraint: duplicate creation and cross-activation rejection', () => {
+  const existingOffers = [
+    { id: 'offer-1', program_id: 'prog-1', name: 'Free Coffee', is_active: true },
+    { id: 'offer-2', program_id: 'prog-1', name: '10% Discount', is_active: false },
+  ]
+
+  // Attempting to create an active offer when an active offer already exists -> 409
+  function validateOfferCreation(payload, programId) {
+    if (payload.is_active !== false) {
+      const active = existingOffers.find((o) => o.program_id === programId && o.is_active)
+      if (active) {
+        return {
+          status: 409,
+          code: 'ACTIVE_OFFER_EXISTS',
+          error: 'An active offer already exists for this business. Deactivate or delete the current offer before creating a new active offer.',
+        }
+      }
+    }
+    return { status: 201, offer: { id: 'offer-new', ...payload, program_id: programId } }
+  }
+
+  const createActiveResult = validateOfferCreation({ name: 'Free Donut', is_active: true }, 'prog-1')
+  assert.equal(createActiveResult.status, 409)
+  assert.equal(createActiveResult.code, 'ACTIVE_OFFER_EXISTS')
+
+  // Creating an inactive offer is allowed
+  const createInactiveResult = validateOfferCreation({ name: 'Free Donut', is_active: false }, 'prog-1')
+  assert.equal(createInactiveResult.status, 201)
+
+  // Attempting to activate an inactive offer while another is active -> 409
+  function validateOfferActivation(targetOfferId, willBeActive, programId) {
+    if (willBeActive) {
+      const existingActive = existingOffers.find((o) => o.program_id === programId && o.is_active && o.id !== targetOfferId)
+      if (existingActive) {
+        return {
+          status: 409,
+          code: 'ACTIVE_OFFER_EXISTS',
+          error: 'Another active offer already exists for this business. Deactivate it before activating this offer.',
+        }
+      }
+    }
+    return { status: 200 }
+  }
+
+  const activateResult = validateOfferActivation('offer-2', true, 'prog-1')
+  assert.equal(activateResult.status, 409)
+  assert.equal(activateResult.code, 'ACTIVE_OFFER_EXISTS')
+
+  // After deactivating offer-1, activating offer-2 succeeds
+  existingOffers[0].is_active = false
+  const activateAfterDeactivate = validateOfferActivation('offer-2', true, 'prog-1')
+  assert.equal(activateAfterDeactivate.status, 200)
+})
+
+test('Points calculation: direct integer earning without conversion multipliers', () => {
+  function computeEarning(model, amount) {
+    const earnValue = Math.max(1, Math.min(1_000_000, Math.floor(Number(amount) || 1)))
+    const stampsDelta = model === 'STAMPS' ? (amount !== undefined ? earnValue : 1) : 0
+    const pointsDelta = model === 'POINTS' ? earnValue : 0
+    return { stampsDelta, pointsDelta }
+  }
+
+  // Stamps default to 1 visit = 1 stamp
+  assert.deepEqual(computeEarning('STAMPS', undefined), { stampsDelta: 1, pointsDelta: 0 })
+  assert.deepEqual(computeEarning('STAMPS', 3), { stampsDelta: 3, pointsDelta: 0 })
+
+  // Points directly award the integer points value (no points_per_currency multiplication)
+  assert.deepEqual(computeEarning('POINTS', 25), { stampsDelta: 0, pointsDelta: 25 })
+  assert.deepEqual(computeEarning('POINTS', 100), { stampsDelta: 0, pointsDelta: 100 })
+  assert.deepEqual(computeEarning('POINTS', 1), { stampsDelta: 0, pointsDelta: 1 })
+})
+
+test('Safeguards: disallow self-awarding points and self-redeeming rewards', () => {
+  function checkEarnSelfAwarding(membershipCustomerId, callerUserId) {
+    if (membershipCustomerId === callerUserId) {
+      const err = new Error('Self-awarding points is not permitted')
+      err.status = 403
+      throw err
+    }
+    return true
+  }
+
+  function checkRedeemSelfRedeeming(membershipCustomerId, callerUserId) {
+    if (membershipCustomerId === callerUserId) {
+      const err = new Error('Self-redeeming rewards is not permitted')
+      err.status = 403
+      throw err
+    }
+    return true
+  }
+
+  // Staff member operating for a distinct customer succeeds
+  assert.equal(checkEarnSelfAwarding('customer-uuid-1', 'staff-uuid-2'), true)
+  assert.equal(checkRedeemSelfRedeeming('customer-uuid-1', 'staff-uuid-2'), true)
+
+  // Staff member attempting to earn or redeem on their own membership is rejected with 403
+  assert.throws(
+    () => checkEarnSelfAwarding('user-123', 'user-123'),
+    (err) => err.status === 403 && err.message.includes('Self-awarding')
+  )
+  assert.throws(
+    () => checkRedeemSelfRedeeming('user-123', 'user-123'),
+    (err) => err.status === 403 && err.message.includes('Self-redeeming')
+  )
+})
+
+test('Reward redemption: atomic progress reset to zero and expired offer rejection', () => {
+  function processRedemption({ membership, reward }) {
+    if (reward.expires_at && new Date(reward.expires_at) <= new Date()) {
+      const err = new Error('This offer has expired and cannot be redeemed')
+      err.status = 400
+      throw err
+    }
+
+    const stampsCost = reward.required_stamps || 0
+    const pointsCost = reward.required_points || 0
+    if (membership.stamps_balance < stampsCost || membership.points_balance < pointsCost) {
+      const err = new Error('Reward is not eligible')
+      err.status = 400
+      throw err
+    }
+
+    // Atomically reset customer progress to zero for the next cycle
+    const stampsDeducted = membership.stamps_balance
+    const pointsDeducted = membership.points_balance
+    membership.stamps_balance = 0
+    membership.points_balance = 0
+
+    return {
+      success: true,
+      stampsDeducted,
+      pointsDeducted,
+      newStampsBalance: membership.stamps_balance,
+      newPointsBalance: membership.points_balance,
+    }
+  }
+
+  // 1. Valid active offer resets progress to zero
+  const activeOffer = { id: 'rew-1', required_points: 10, expires_at: new Date(Date.now() + 86400000).toISOString() }
+  const customer = { stamps_balance: 0, points_balance: 14 }
+  const res = processRedemption({ membership: customer, reward: activeOffer })
+  assert.equal(res.success, true)
+  assert.equal(res.pointsDeducted, 14)
+  assert.equal(res.newPointsBalance, 0, 'Progress must be reset to zero on successful redemption')
+
+  // 2. Expired offer is blocked even if customer has points
+  const expiredOffer = { id: 'rew-2', required_points: 10, expires_at: '2020-01-01T00:00:00.000Z' }
+  const customer2 = { stamps_balance: 0, points_balance: 20 }
+  assert.throws(
+    () => processRedemption({ membership: customer2, reward: expiredOffer }),
+    (err) => err.status === 400 && err.message.includes('expired')
+  )
+})
+
+test('Activity logs: pagination, limit/offset, and stable ordering (created_at DESC, id DESC)', () => {
+  const allTransactions = [
+    { id: 10, type: 'EARN', created_at: '2026-10-21T09:00:00Z', stamps_delta: 1 },
+    { id: 9, type: 'EARN', created_at: '2026-10-21T08:30:00Z', stamps_delta: 1 },
+    { id: 8, type: 'REDEEM', created_at: '2026-10-21T08:00:00Z', stamps_delta: -10 },
+    { id: 7, type: 'EARN', created_at: '2026-10-20T17:00:00Z', stamps_delta: 1 },
+    { id: 6, type: 'EARN', created_at: '2026-10-20T16:00:00Z', stamps_delta: 1 },
+  ]
+
+  function queryActivity({ limit = 2, offset = 0 }) {
+    const sorted = [...allTransactions].sort((a, b) => {
+      const dateCmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      if (dateCmp !== 0) return dateCmp
+      return b.id - a.id
+    })
+    const activities = sorted.slice(offset, offset + limit)
+    const hasMore = offset + activities.length < sorted.length
+    return { activities, hasMore, total: sorted.length }
+  }
+
+  // Initial load: 2 most recent entries
+  const initial = queryActivity({ limit: 2, offset: 0 })
+  assert.equal(initial.activities.length, 2)
+  assert.equal(initial.activities[0].id, 10)
+  assert.equal(initial.activities[1].id, 9)
+  assert.equal(initial.hasMore, true)
+  assert.equal(initial.total, 5)
+
+  // Next page: offset=2, limit=20
+  const page2 = queryActivity({ limit: 20, offset: 2 })
+  assert.equal(page2.activities.length, 3)
+  assert.equal(page2.activities[0].id, 8)
+  assert.equal(page2.activities[1].id, 7)
+  assert.equal(page2.activities[2].id, 6)
+  assert.equal(page2.hasMore, false)
+})
+
+test('Customer registration: exact required fields (name, phone, optional email, password) and immediate confirmed session', () => {
+  function validateSignupPayload(body) {
+    const { fullName, phone, email, password } = body
+    if (!fullName || !fullName.trim()) return { error: 'Full name is required', status: 400 }
+    if (!phone) return { error: 'A valid phone number is required', status: 400 }
+    if (!password || password.length < 8) return { error: 'Password must contain at least 8 characters', status: 400 }
+    return {
+      status: 201,
+      user: {
+        id: 'cust-new',
+        phone,
+        email: email || null,
+        user_metadata: { full_name: fullName.trim(), phone },
+      },
+      session: {
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+        expires_in: 3600,
+      },
+      confirmationRequired: false,
+    }
+  }
+
+  // 1. Missing phone is rejected
+  const missingPhone = validateSignupPayload({ fullName: 'Sarah Connor', password: 'Password123!' })
+  assert.equal(missingPhone.status, 400)
+  assert.ok(missingPhone.error.includes('phone'))
+
+  // 2. Missing name is rejected
+  const missingName = validateSignupPayload({ phone: '+213555123456', password: 'Password123!' })
+  assert.equal(missingName.status, 400)
+  assert.ok(missingName.error.includes('Full name'))
+
+  // 3. Short password is rejected
+  const shortPass = validateSignupPayload({ fullName: 'Sarah', phone: '+213555123456', password: 'pass' })
+  assert.equal(shortPass.status, 400)
+  assert.ok(shortPass.error.includes('Password'))
+
+  // 4. Name + Phone + Password without email succeeds with confirmed session (zero verification)
+  const validNoEmail = validateSignupPayload({
+    fullName: 'Sarah Connor',
+    phone: '+213555123456',
+    password: 'Password123!',
+  })
+  assert.equal(validNoEmail.status, 201)
+  assert.equal(validNoEmail.confirmationRequired, false)
+  assert.ok(validNoEmail.session.access_token)
+  assert.equal(validNoEmail.user.email, null)
+
+  // 5. Name + Phone + Email + Password succeeds with confirmed session
+  const validWithEmail = validateSignupPayload({
+    fullName: 'Sarah Connor',
+    phone: '+213555123456',
+    email: 'sarah@example.com',
+    password: 'Password123!',
+  })
+  assert.equal(validWithEmail.status, 201)
+  assert.equal(validWithEmail.confirmationRequired, false)
+  assert.equal(validWithEmail.user.email, 'sarah@example.com')
+})

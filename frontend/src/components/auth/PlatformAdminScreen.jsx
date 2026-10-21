@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import PreferencesControls from '../PreferencesControls'
 import { usePreferences } from '../../contexts/usePreferences'
+import ActivityLogSection from '../common/ActivityLogSection'
 
 function formatWhatsappUrl(phone) {
   if (!phone) return null
@@ -175,6 +176,9 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
             <article className="panel info-panel"><div className="panel-heading"><div><h2>{t('platformHealth')}</h2><p>{t('platformHealthCopy')}</p></div><span className="status-indicator" /></div><div className="settings-list"><div><span>{t('apiStatus')}</span><strong>{t('connected')}</strong></div><div><span>{t('dataScope')}</span><strong>{t('allBusinesses')}</strong></div><div><span>{t('businessesWithPrograms')}</span><strong>{businesses.filter((business) => business.active_programs > 0).length}</strong></div><div><span>{t('averageCustomers')}</span><strong>{totals.businesses ? Math.round(totals.customers / totals.businesses) : 0}</strong></div></div></article>
             <article className="panel info-panel"><div className="panel-heading"><div><h2>{t('quickActions')}</h2><p>{t('quickActionsCopy')}</p></div></div><div className="lookup-actions"><button className="secondary-button" onClick={() => setActiveView('Businesses')}><Users size={15} />{t('reviewBusinesses')}</button><button className="secondary-button" onClick={() => window.location.reload()}><Activity size={15} />{t('reloadOverview')}</button></div></article>
           </section>
+          <div style={{ marginTop: '20px' }}>
+            <ActivityLogSection accessToken={session.access_token} initialLimit={2} loadBatchSize={20} title={t('platformActivity', 'Platform Activity Log')} subtitle={t('allPlatformTransactions', 'Latest loyalty transactions across all businesses')} />
+          </div>
           </>}
           {activeView === 'Businesses' && <section className="panel customers-panel">
             <div className="panel-heading">
@@ -425,6 +429,10 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
                     )}
                   </div>
                 </div>
+              </div>
+
+              <div style={{ margin: '20px 0' }}>
+                <ActivityLogSection accessToken={session.access_token} businessId={selectedBusiness.id} initialLimit={2} loadBatchSize={20} title={`${selectedBusiness.name} · ${t('activityLog', 'Activity Log')}`} />
               </div>
 
               <form className="subscription-renewal-form" onSubmit={async (event) => { event.preventDefault(); setRenewalMessage(''); try { const result = await apiFetch('/api/admin/subscriptions/renew-cash', session.access_token, { method: 'POST', body: JSON.stringify({ businessId: selectedBusiness.id, planId: renewalForm.planId, amount: Number(renewalForm.amount), receivedAt: renewalForm.receivedAt || undefined, reference: renewalForm.reference, notes: renewalForm.notes, idempotencyKey: crypto.randomUUID() }) }); setSubscriptionByBusiness((current) => ({ ...current, [selectedBusiness.id]: result.subscription })); setRenewalMessage(t('subscriptionRenewed')); } catch (err) { setRenewalMessage(err.message) } }}>

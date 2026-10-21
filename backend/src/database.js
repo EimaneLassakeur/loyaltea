@@ -410,6 +410,7 @@ export async function earnLoyalty({ userId, membershipId, locationId, model, amo
     `, [membershipId])
     const membership = membershipResult.rows[0]
     if (!membership || !membership.is_active) throw httpError(404, 'Membership is not active')
+    if (membership.customer_id === userId) throw httpError(403, 'Self-awarding points is not permitted')
     if (membership.business_status !== 'active') throw httpError(403, 'This business is paused or unavailable')
     if (!membership.program_active) throw httpError(400, 'Loyalty program is inactive')
     if (membership.model !== model) throw httpError(400, 'Loyalty model does not match the program')
@@ -422,10 +423,12 @@ export async function earnLoyalty({ userId, membershipId, locationId, model, amo
     )
     const employeeId = employeeResult.rows[0]?.id || null
     const normalizedAmount = Number(amount)
-    if (model === 'POINTS' && (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0 || normalizedAmount > 1_000_000)) throw httpError(400, 'Purchase amount is invalid')
-    const stampsDelta = model === 'STAMPS' ? 1 : 0
-    const pointsDelta = model === 'POINTS' ? Math.floor(normalizedAmount * Number(membership.points_per_currency)) : 0
-    if (model === 'POINTS' && pointsDelta < 1) throw httpError(400, 'Purchase amount is below the minimum points threshold')
+    if (model === 'POINTS' && amount !== undefined && (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0 || normalizedAmount > 1_000_000)) {
+      throw httpError(400, 'Purchase amount is invalid')
+    }
+    const earnValue = Math.max(1, Math.min(1_000_000, Math.floor(Number(amount) || 1)))
+    const stampsDelta = model === 'STAMPS' ? (amount !== undefined ? earnValue : 1) : 0
+    const pointsDelta = model === 'POINTS' ? earnValue : 0
     const transactionResult = await client.query(`
       insert into public.transactions
         (membership_id, business_id, location_id, employee_id, type, stamps_delta, points_delta, idempotency_key)
@@ -483,9 +486,13 @@ export async function redeemReward({ userId, membershipId, rewardId, locationId,
       join public.loyalty_programs p on p.id = r.program_id
       where r.id = $1
     `, [rewardId])
+    if (membership.customer_id === userId) throw httpError(403, 'Self-redeeming rewards is not permitted')
     const reward = rewardResult.rows[0]
-    if (!reward || !reward.is_active || !reward.program_active || reward.program_id !== membership.program_id || (reward.expires_at && new Date(reward.expires_at) <= new Date())) {
+    if (!reward || !reward.is_active || !reward.program_active || reward.program_id !== membership.program_id) {
       throw httpError(400, 'Reward is not available for this membership')
+    }
+    if (reward.expires_at && new Date(reward.expires_at) <= new Date()) {
+      throw httpError(400, 'This offer has expired and cannot be redeemed')
     }
     await assertStaffCanOperate(client, userId, reward.business_id, locationId, 'redeem')
 
@@ -514,18 +521,20 @@ export async function redeemReward({ userId, membershipId, rewardId, locationId,
       return row
     }
 
+    const stampsDeducted = membership.stamps_balance
+    const pointsDeducted = membership.points_balance
     await client.query(`
       update public.customer_memberships
-      set stamps_balance = stamps_balance - $2,
-          points_balance = points_balance - $3,
+      set stamps_balance = 0,
+          points_balance = 0,
           updated_at = now()
       where id = $1
-    `, [membershipId, stampsCost, pointsCost])
+    `, [membershipId])
     await client.query(`
       insert into public.transactions
         (membership_id, business_id, location_id, employee_id, type, stamps_delta, points_delta, idempotency_key, metadata)
       values ($1, $2, $3, $4, 'REDEEM', $5, $6, $7, $8)
-    `, [membershipId, reward.business_id, locationId, employeeId, -stampsCost, -pointsCost, requestId, JSON.stringify({ reward_id: rewardId })])
+    `, [membershipId, reward.business_id, locationId, employeeId, -stampsDeducted, -pointsDeducted, requestId, JSON.stringify({ reward_id: rewardId, reward_name: reward.name })])
     await client.query('commit')
     return redemptionResult.rows[0]
   } catch (error) {
