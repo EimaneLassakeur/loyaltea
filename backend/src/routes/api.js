@@ -370,7 +370,7 @@ router.get('/customer/memberships', async (request, response, next) => {
   try {
     const { data, error } = await request.supabase
       .from('customer_memberships')
-      .select('id, secure_token, stamps_balance, points_balance, is_active, joined_at, updated_at, loyalty_programs(id, name, description, model, currency_unit, businesses(name, logo_url), rewards(id, name, description, required_stamps, required_points, expires_at, is_active))')
+      .select('id, secure_token, stamps_balance, points_balance, is_active, joined_at, updated_at, loyalty_programs(id, name, description, model, currency_unit, businesses(name, logo_url), rewards(id, name, description, required_stamps, required_points, expires_at, is_active, deleted_at))')
       .eq('customer_id', request.user.id)
       .order('updated_at', { ascending: false })
     if (error) return next(error)
@@ -794,7 +794,7 @@ router.get('/dashboard', requireRoles(...staffRoles), requireActiveBusinessSubsc
       pool.query(`
         SELECT id, program_id, name, description, image_url, required_stamps, required_points, expires_at, is_active, created_at, updated_at
         FROM public.rewards
-        WHERE program_id = $1
+        WHERE program_id = $1 AND deleted_at IS NULL
         ORDER BY created_at ASC
       `, [program.id]),
     ])
@@ -1174,8 +1174,8 @@ router.delete('/rewards/:rewardId', requireRoles(...managerRoles), async (reques
     const hasRedemptions = (redemptions.rows[0]?.count || 0) > 0
 
     if (hasRedemptions) {
-      await pool.query('UPDATE public.rewards SET is_active = false, updated_at = now() WHERE id = $1', [request.params.rewardId])
-      return response.json({ message: 'Reward deactivated to preserve redemption audit history', softDeleted: true, id: request.params.rewardId })
+      await pool.query('UPDATE public.rewards SET is_active = false, deleted_at = now(), updated_at = now() WHERE id = $1', [request.params.rewardId])
+      return response.json({ message: 'Reward deleted successfully', deleted: true, id: request.params.rewardId })
     } else {
       await pool.query('DELETE FROM public.rewards WHERE id = $1', [request.params.rewardId])
       return response.json({ message: 'Reward deleted successfully', deleted: true, id: request.params.rewardId })
@@ -1247,7 +1247,7 @@ async function insertTable(request, response, next, table, allowedFields, requir
       }
       if (payload.is_active !== false) {
         const activeCheck = await pool.query(
-          'SELECT id, name FROM public.rewards WHERE program_id = $1 AND is_active = true LIMIT 1',
+          'SELECT id, name FROM public.rewards WHERE program_id = $1 AND is_active = true AND deleted_at IS NULL LIMIT 1',
           [payload.program_id]
         )
         if (activeCheck.rowCount > 0) {

@@ -2912,3 +2912,135 @@ html[dir='rtl'] .activity-entry-main,
 html[dir='rtl'] .activity-entry-meta {
   flex-direction: row-reverse;
 }
+
+
+/* Counter Operations & Live Point Award Styling */
+.resolved-customer-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-soft, rgba(0, 0, 0, 0.02));
+  border: 1px solid var(--line);
+  margin-top: 12px;
+}
+.customer-live-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.customer-live-balance .balance-num {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1;
+}
+.customer-live-balance .balance-unit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.counter-offer-status {
+  display: inline-flex;
+  align-items: center;
+}
+.unlocked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: rgba(46, 125, 50, 0.12);
+  color: #2e7d32;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(46, 125, 50, 0.3);
+  animation: pulseUnlock 2s infinite ease-in-out;
+}
+@keyframes pulseUnlock {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+.progress-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 4px 10px;
+  border-radius: 16px;
+}
+.counter-award-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.counter-points-entry .field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+  display: block;
+}
+.award-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.award-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+}
+.input-prefix-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+html[dir='rtl'] .input-prefix-icon {
+  left: auto;
+  right: 10px;
+}
+.points-entry-input {
+  width: 100%;
+  height: 42px;
+  padding-left: 32px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+}
+html[dir='rtl'] .points-entry-input {
+  padding-left: 12px !important;
+  padding-right: 32px !important;
+}
+.counter-award-btn {
+  flex-shrink: 0;
+  min-height: 42px;
+  padding: 0 16px;
+  font-weight: 700;
+}
+.counter-redeem-wrapper {
+  width: 100%;
+}
+.counter-redeem-action-btn {
+  width: 100%;
+  min-height: 42px;
+  justify-content: center;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.counter-redeem-action-btn.is-active-unlocked {
+  background: #2e7d32 !important;
+  color: #ffffff !important;
+  border-color: #2e7d32 !important;
+  font-weight: 800 !important;
+  box-shadow: 0 4px 12px rgba(46, 125, 50, 0.25) !important;
+  cursor: pointer;
+}

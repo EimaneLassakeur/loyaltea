@@ -68,19 +68,44 @@ export default function CustomerPage({ session, profile, onSignOut }) {
 
   useEffect(() => {
     let mounted = true
-    apiFetch('/api/customer/memberships', session.access_token)
-      .then((result) => {
-        if (!mounted) return
-        setMemberships(result.memberships || [])
-      })
-      .catch((requestError) => {
-        if (mounted) setError(requestError.message || t('couldNotLoadCards', 'Could not load your loyalty cards'))
-      })
-      .finally(() => {
-        if (mounted) setLoading(false)
-      })
+    const fetchCards = (isInitial = false) => {
+      if (isInitial) setLoading(true)
+      apiFetch('/api/customer/memberships', session.access_token)
+        .then((result) => {
+          if (!mounted) return
+          setMemberships(result.memberships || [])
+        })
+        .catch((requestError) => {
+          if (mounted && isInitial) setError(requestError.message || t('couldNotLoadCards', 'Could not load your loyalty cards'))
+        })
+        .finally(() => {
+          if (mounted && isInitial) setLoading(false)
+        })
+    }
+
+    fetchCards(true)
+
+    // Active 4-second polling to reflect counter scans and awards in real time
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchCards(false)
+      }
+    }, 4000)
+
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchCards(false)
+      }
+    }
+
+    window.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onVisibility)
+
     return () => {
       mounted = false
+      clearInterval(interval)
+      window.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onVisibility)
     }
   }, [session.access_token, t])
 
@@ -324,7 +349,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
             const theme = getBusinessTheme(businessName)
 
             // Find the active offer
-            const allRewards = program.rewards || []
+            const allRewards = (program.rewards || []).filter((r) => !r.deleted_at)
             const activeOffer = allRewards.find((r) => r.is_active)
             const isOfferExpired = activeOffer?.expires_at && new Date(activeOffer.expires_at) <= new Date()
 

@@ -18,12 +18,22 @@ import { usePreferences } from '../../contexts/usePreferences'
 export default function RewardsPanel({ program, _businessId, accessToken, onProgramUpdate }) {
   const { t } = usePreferences()
 
+  // Filter out any deleted offers
+  const allRewards = (program?.rewards || []).filter((r) => !r.deleted_at)
+  const activeOffer = allRewards.find((r) => r.is_active)
+  const inactiveOffers = allRewards.filter((r) => !r.is_active)
+
+  const isProgramPoints = activeOffer
+    ? Boolean(activeOffer.required_points)
+    : program?.model === 'POINTS'
+
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState({
     name: '',
     description: '',
-    threshold: '10',
+    model: isProgramPoints ? 'POINTS' : 'STAMPS',
+    threshold: isProgramPoints ? '100' : '10',
     expires_at: '',
   })
   const [creating, setCreating] = useState(false)
@@ -33,7 +43,8 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
   const [editForm, setEditForm] = useState({
     name: '',
     description: '',
-    threshold: '10',
+    model: 'POINTS',
+    threshold: '100',
     expires_at: '',
     is_active: true,
   })
@@ -48,13 +59,6 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
     setTimeout(() => setActionNotice(''), 3500)
   }
 
-  const allRewards = program?.rewards || []
-  const isPoints = program?.model === 'POINTS'
-  const unit = isPoints ? t('points', 'points') : t('stamps', 'stamps')
-
-  const activeOffer = allRewards.find((r) => r.is_active)
-  const inactiveOffers = allRewards.filter((r) => !r.is_active)
-
   // Handle creating a new offer
   const handleCreateOffer = async (e) => {
     e.preventDefault()
@@ -68,7 +72,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
       setCreateError(
         t(
           'activeOfferExistsError',
-          'Only one active offer is allowed at a time. Please deactivate the current active offer first.'
+          'Only one active offer is allowed at a time. Please deactivate or delete the current offer first.'
         )
       )
       return
@@ -77,13 +81,14 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
     setCreating(true)
     setCreateError('')
     try {
+      const offerModel = createForm.model || 'POINTS'
       const thresholdVal = Math.max(1, parseInt(createForm.threshold, 10) || 1)
       const payload = {
         program_id: program.id,
         name: createForm.name.trim(),
         description: createForm.description.trim() || undefined,
-        required_stamps: !isPoints ? thresholdVal : undefined,
-        required_points: isPoints ? thresholdVal : undefined,
+        required_stamps: offerModel === 'STAMPS' ? thresholdVal : undefined,
+        required_points: offerModel === 'POINTS' ? thresholdVal : undefined,
         expires_at: createForm.expires_at ? new Date(createForm.expires_at).toISOString() : undefined,
         is_active: true,
       }
@@ -94,7 +99,13 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
       })
 
       setShowCreateModal(false)
-      setCreateForm({ name: '', description: '', threshold: '10', expires_at: '' })
+      setCreateForm({
+        name: '',
+        description: '',
+        model: offerModel,
+        threshold: offerModel === 'POINTS' ? '100' : '10',
+        expires_at: '',
+      })
       showNotice(t('offerCreated', 'Offer created successfully'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
@@ -107,12 +118,14 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
   // Open edit modal
   const startEditOffer = (reward) => {
     setEditingReward(reward)
+    const offerIsPoints = Boolean(reward.required_points)
     const threshold = String(
-      isPoints ? reward.required_points || 10 : reward.required_stamps || 10
+      offerIsPoints ? reward.required_points || 100 : reward.required_stamps || 10
     )
     setEditForm({
       name: reward.name || '',
       description: reward.description || '',
+      model: offerIsPoints ? 'POINTS' : 'STAMPS',
       threshold,
       expires_at: reward.expires_at ? reward.expires_at.slice(0, 10) : '',
       is_active: reward.is_active ?? true,
@@ -139,12 +152,13 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
     setUpdating(true)
     setUpdateError('')
     try {
+      const offerModel = editForm.model || 'POINTS'
       const thresholdVal = Math.max(1, parseInt(editForm.threshold, 10) || 1)
       const payload = {
         name: editForm.name.trim(),
         description: editForm.description.trim() || null,
-        required_stamps: !isPoints ? thresholdVal : undefined,
-        required_points: isPoints ? thresholdVal : undefined,
+        required_stamps: offerModel === 'STAMPS' ? thresholdVal : null,
+        required_points: offerModel === 'POINTS' ? thresholdVal : null,
         expires_at: editForm.expires_at ? new Date(editForm.expires_at).toISOString() : null,
         is_active: editForm.is_active,
       }
@@ -191,7 +205,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
     }
   }
 
-  // Delete offer
+  // Delete offer (actually deletes from DB or sets deleted_at, completely removed from view)
   const handleDeleteOffer = async (reward) => {
     if (!reward?.id || !accessToken) return
     if (!window.confirm(t('deleteOfferConfirm', 'Are you sure you want to delete this offer?'))) return
@@ -200,7 +214,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
       await apiFetch(`/api/rewards/${reward.id}`, accessToken, {
         method: 'DELETE',
       })
-      showNotice(t('offerDeleted', 'Offer deleted'))
+      showNotice(t('offerDeleted', 'Offer deleted successfully'))
       if (onProgramUpdate) await onProgramUpdate()
     } catch (err) {
       showNotice(err.message)
@@ -208,7 +222,9 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
   }
 
   const renderOfferCard = (reward, isActiveCard = false) => {
-    const threshold = isPoints ? reward.required_points || 0 : reward.required_stamps || 0
+    const offerIsPoints = Boolean(reward.required_points)
+    const threshold = offerIsPoints ? reward.required_points || 0 : reward.required_stamps || 0
+    const offerUnit = offerIsPoints ? t('points', 'points') : t('stamps', 'stamps')
     const isExpired = reward.expires_at && new Date(reward.expires_at) <= new Date()
 
     return (
@@ -220,7 +236,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
       >
         <div className="reward-info-col">
           <div className="reward-icon" aria-hidden="true">
-            {isPoints ? <Coins size={20} /> : <Gift size={20} />}
+            {offerIsPoints ? <Coins size={20} /> : <Gift size={20} />}
           </div>
           <div className="reward-text-details">
             <div className="reward-title-row">
@@ -236,7 +252,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
             <p className="reward-description">{reward.description || t('noDescription', 'No description provided')}</p>
             <div className="reward-meta-row">
               <span className="reward-threshold-badge">
-                {threshold} {unit} {t('requiredToRedeem', 'required')}
+                {threshold} {offerUnit} {t('requiredToRedeem', 'required')}
               </span>
               {reward.expires_at ? (
                 <span className={`reward-expiry ${isExpired ? 'is-expired' : ''}`}>
@@ -306,8 +322,8 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <h2>{t('businessOffers', 'Loyalty Offers')}</h2>
               <span className="status-pill ready">
-                {isPoints ? <Coins size={12} style={{ marginRight: '4px' }} /> : <Stamp size={12} style={{ marginRight: '4px' }} />}
-                {isPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
+                {isProgramPoints ? <Coins size={12} style={{ marginRight: '4px' }} /> : <Stamp size={12} style={{ marginRight: '4px' }} />}
+                {isProgramPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
               </span>
             </div>
             <p>{t('singleActiveOfferSubtitle', 'Manage your customer loyalty offer. Each business can have one active offer at a time.')}</p>
@@ -320,10 +336,11 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
                 showNotice(
                   t(
                     'activeOfferExistsNotice',
-                    'Another offer is currently active. Deactivate it first before creating a new active offer.'
+                    'Another offer is currently active. Deactivate or delete it first before creating a new offer.'
                   )
                 )
               } else {
+                setCreateError('')
                 setShowCreateModal(true)
               }
             }}
@@ -358,31 +375,30 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
             <div className="panel-empty no-active-offer-empty">
               <Gift size={28} />
               <strong>{t('noActiveOffer', 'No active offer running')}</strong>
-              <span>
-                {t(
-                  'createOfferToStart',
-                  'Create an offer or activate an existing one below so your customers can start earning rewards.'
-                )}
-              </span>
+              <p>{t('noActiveOfferCopy', 'Create a new offer to start rewarding your customers.')}</p>
               <button
                 type="button"
                 className="primary-button"
-                style={{ marginTop: '12px' }}
-                onClick={() => setShowCreateModal(true)}
+                style={{ marginTop: '10px' }}
+                onClick={() => {
+                  setCreateError('')
+                  setShowCreateModal(true)
+                }}
               >
-                <Plus size={15} /> {t('createOffer', 'Create Offer')}
+                <Plus size={15} /> <span>{t('createOffer', 'Create Offer')}</span>
               </button>
             </div>
           )}
         </div>
 
-        {/* 2. Inactive / Past Offers Section */}
+        {/* 2. Deactivated / Inactive Offers Section */}
         {inactiveOffers.length > 0 && (
-          <div className="inactive-offers-container" style={{ marginTop: '32px' }}>
-            <h3 className="section-subheading">
-              {t('pastAndInactiveOffers', 'Past & Inactive Offers')} ({inactiveOffers.length})
+          <div className="inactive-offers-container" style={{ marginTop: '28px' }}>
+            <h3 className="section-subheading" style={{ color: 'var(--muted)' }}>
+              <Power size={15} style={{ marginRight: '6px' }} />
+              {t('inactiveOffers', 'Previous Inactive Offers')} ({inactiveOffers.length})
             </h3>
-            <div className="reward-management-list">
+            <div className="inactive-offers-list">
               {inactiveOffers.map((reward) => renderOfferCard(reward, false))}
             </div>
           </div>
@@ -412,6 +428,43 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
             </div>
 
             <form onSubmit={handleCreateOffer} className="modal-form">
+              {/* Choose Points or Stamps */}
+              <div>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
+                  {t('rewardType', 'Reward Type')} *
+                </span>
+                <div className="auth-method-switch" style={{ marginTop: '6px' }} role="group">
+                  <button
+                    type="button"
+                    className={createForm.model === 'POINTS' ? 'active' : ''}
+                    onClick={() =>
+                      setCreateForm({
+                        ...createForm,
+                        model: 'POINTS',
+                        threshold: createForm.threshold === '10' ? '100' : createForm.threshold,
+                      })
+                    }
+                  >
+                    <Coins size={14} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+                    {t('pointsModel', 'Points')}
+                  </button>
+                  <button
+                    type="button"
+                    className={createForm.model === 'STAMPS' ? 'active' : ''}
+                    onClick={() =>
+                      setCreateForm({
+                        ...createForm,
+                        model: 'STAMPS',
+                        threshold: createForm.threshold === '100' ? '10' : createForm.threshold,
+                      })
+                    }
+                  >
+                    <Stamp size={14} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+                    {t('stampsModel', 'Stamps')}
+                  </button>
+                </div>
+              </div>
+
               <label>
                 <span>{t('offerTitle', 'Offer Title')} *</span>
                 <input
@@ -434,7 +487,9 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
 
               <label>
                 <span>
-                  {isPoints ? t('requiredPoints', 'Points Required') : t('requiredStamps', 'Stamps Required')} *
+                  {createForm.model === 'POINTS'
+                    ? t('requiredPoints', 'Points Required')
+                    : t('requiredStamps', 'Stamps Required')} *
                 </span>
                 <input
                   required
@@ -443,6 +498,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
                   step="1"
                   value={createForm.threshold}
                   onChange={(e) => setCreateForm({ ...createForm, threshold: e.target.value })}
+                  placeholder={createForm.model === 'POINTS' ? 'e.g. 100 or 500' : 'e.g. 10'}
                 />
               </label>
 
@@ -496,6 +552,43 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
             </div>
 
             <form onSubmit={handleUpdateOffer} className="modal-form">
+              {/* Choose Points or Stamps in Edit */}
+              <div>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--ink)' }}>
+                  {t('rewardType', 'Reward Type')} *
+                </span>
+                <div className="auth-method-switch" style={{ marginTop: '6px' }} role="group">
+                  <button
+                    type="button"
+                    className={editForm.model === 'POINTS' ? 'active' : ''}
+                    onClick={() =>
+                      setEditForm({
+                        ...editForm,
+                        model: 'POINTS',
+                        threshold: editForm.threshold === '10' ? '100' : editForm.threshold,
+                      })
+                    }
+                  >
+                    <Coins size={14} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+                    {t('pointsModel', 'Points')}
+                  </button>
+                  <button
+                    type="button"
+                    className={editForm.model === 'STAMPS' ? 'active' : ''}
+                    onClick={() =>
+                      setEditForm({
+                        ...editForm,
+                        model: 'STAMPS',
+                        threshold: editForm.threshold === '100' ? '10' : editForm.threshold,
+                      })
+                    }
+                  >
+                    <Stamp size={14} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+                    {t('stampsModel', 'Stamps')}
+                  </button>
+                </div>
+              </div>
+
               <label>
                 <span>{t('offerTitle', 'Offer Title')} *</span>
                 <input
@@ -516,7 +609,9 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
 
               <label>
                 <span>
-                  {isPoints ? t('requiredPoints', 'Points Required') : t('requiredStamps', 'Stamps Required')} *
+                  {editForm.model === 'POINTS'
+                    ? t('requiredPoints', 'Points Required')
+                    : t('requiredStamps', 'Stamps Required')} *
                 </span>
                 <input
                   required
@@ -540,14 +635,13 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
                 />
               </label>
 
-              <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '6px' }}>
                 <input
                   type="checkbox"
-                  style={{ width: 'auto' }}
                   checked={editForm.is_active}
                   onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
                 />
-                <span>{t('active', 'Active')}</span>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>{t('active', 'Active')}</span>
               </label>
 
               {updateError && <p className="form-error">{updateError}</p>}

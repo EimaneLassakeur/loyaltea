@@ -89,18 +89,24 @@ export default function DashboardPage({ session, profile, onSignOut }) {
     }))
     .filter((customer) => `${customer.name} ${customer.email}`.toLowerCase().includes(search.toLowerCase()))
 
-  const addLoyalty = async (customer) => {
+  const addLoyalty = async (customer, customAmount) => {
     if (busyMembership) return
     const locationId = dashboard.business?.business_locations?.find((location) => location.is_active)?.id
-    if (!locationId) return setDataError(t('createActiveLocation'))
+    if (!locationId) {
+      setDataError(t('createActiveLocation'))
+      throw new Error(t('createActiveLocation'))
+    }
     setBusyMembership(customer.id)
     setDataError('')
     try {
-      await earnLoyalty(session.access_token, customer.id, locationId, dashboard.program?.model, dashboard.program?.model === 'POINTS' ? Number(earnAmount) : undefined, crypto.randomUUID())
+      const isPoints = dashboard.program?.model === 'POINTS'
+      const amount = customAmount !== undefined ? Number(customAmount) : (isPoints ? Number(earnAmount) : 1)
+      await earnLoyalty(session.access_token, customer.id, locationId, dashboard.program?.model, isPoints ? amount : (amount > 1 ? amount : undefined), crypto.randomUUID())
       await refreshDashboard()
-      showNotice(`${dashboard.program?.model === 'POINTS' ? t('point') : t('stamp')} ${t('addedTo')} ${customer.name}`)
+      showNotice(`${isPoints ? `${amount} ${t('points')}` : t('stamp')} ${t('addedTo')} ${customer.name}`)
     } catch (error) {
       setDataError(error.message)
+      throw error
     } finally {
       setBusyMembership('')
     }
@@ -108,9 +114,12 @@ export default function DashboardPage({ session, profile, onSignOut }) {
 
   const redeemCustomerReward = async (customer) => {
     if (busyMembership) return
-    const reward = (dashboard.program?.rewards || []).find((item) => item.is_active && (dashboard.program.model === 'STAMPS' ? customer.stamps >= item.required_stamps : customer.stamps >= item.required_points))
+    const reward = (dashboard.program?.rewards || []).find((item) => item.is_active && !item.deleted_at && (dashboard.program.model === 'STAMPS' ? customer.stamps >= item.required_stamps : customer.stamps >= item.required_points))
     const locationId = dashboard.business?.business_locations?.find((location) => location.is_active)?.id
-    if (!reward || !locationId) return setDataError(t('customerNotEligible'))
+    if (!reward || !locationId) {
+      setDataError(t('customerNotEligible'))
+      throw new Error(t('customerNotEligible'))
+    }
     setBusyMembership(customer.id)
     setDataError('')
     try {
@@ -119,6 +128,7 @@ export default function DashboardPage({ session, profile, onSignOut }) {
       showNotice(`${reward.name} ${t('redeemedFor')} ${customer.name}`)
     } catch (error) {
       setDataError(error.message)
+      throw error
     } finally {
       setBusyMembership('')
     }

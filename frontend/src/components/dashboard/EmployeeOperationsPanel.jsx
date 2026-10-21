@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Search, UserRound, X } from 'lucide-react'
+import { Camera, Coins, Gift, Plus, Search, Sparkles, UserRound, X } from 'lucide-react'
 import { lookupMembership } from '../../services/dashboardService'
 import { usePreferences } from '../../contexts/usePreferences'
 
@@ -7,6 +7,7 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
   const { t } = usePreferences()
   const [token, setToken] = useState('')
   const [customer, setCustomer] = useState(null)
+  const [pointsToAward, setPointsToAward] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [scannerActive, setScannerActive] = useState(false)
@@ -22,6 +23,12 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
       }
     }
   }, [])
+
+  const activeOffer = (program?.rewards || []).find((r) => r.is_active && !r.deleted_at)
+  const targetThreshold = activeOffer
+    ? (program?.model === 'POINTS' ? activeOffer.required_points : activeOffer.required_stamps) || 1
+    : 10
+  const isUnlocked = activeOffer && customer && customer.stamps >= targetThreshold
 
   const resolveToken = async (value) => {
     const normalized = value.trim()
@@ -45,6 +52,48 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
     } catch (requestError) {
       setCustomer(null)
       setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAward = async () => {
+    if (busy || !customer) return
+    const isPoints = program?.model === 'POINTS'
+    const amount = isPoints ? parseInt(pointsToAward, 10) : 1
+    if (isPoints && (!Number.isFinite(amount) || amount <= 0)) {
+      setError(t('invalidAwardPoints', 'Please enter a valid number of points'))
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      await onAddLoyalty(customer, amount)
+      setCustomer((prev) => (prev ? { ...prev, stamps: prev.stamps + amount } : null))
+      setPointsToAward('')
+    } catch (awardError) {
+      setError(awardError.message || t('couldNotAwardPoints', 'Could not award loyalty points'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRedeem = async () => {
+    if (busy || !customer) return
+    if (!isUnlocked) {
+      setError(t('customerNotEligible', 'Customer has not reached the required points for this reward'))
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      await onRedeem(customer)
+      // Progress resets atomically to 0 upon reward redemption
+      setCustomer((prev) => (prev ? { ...prev, stamps: 0 } : null))
+    } catch (redeemError) {
+      setError(redeemError.message || t('couldNotRedeem', 'Could not redeem reward'))
     } finally {
       setBusy(false)
     }
@@ -99,6 +148,7 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
         </div>
         <Camera size={19} />
       </div>
+
       <div className="lookup-actions">
         <button className="secondary-button" onClick={scannerActive ? stopScanner : startScanner}>
           <Camera size={15} /> {scannerActive ? t('stopScanner') : t('scanCustomerQr')}
@@ -120,8 +170,11 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
           </button>
         </div>
       </div>
+
       <div id="employee-qr-reader" className="employee-qr-reader" />
-      {error && <p className="form-error">{error}</p>}
+
+      {error && <p className="form-error" style={{ margin: '10px 0' }}>{error}</p>}
+
       {customer && (
         <div className="resolved-customer">
           <div className="resolved-customer-title">
@@ -134,14 +187,99 @@ export default function EmployeeOperationsPanel({ accessToken, program, onAddLoy
               <X size={16} />
             </button>
           </div>
-          <p>{customer.stamps} {customer.unit} {t('currentlyAvailable')}</p>
-          <div className="resolved-customer-actions">
-            <button className="primary-button" onClick={() => onAddLoyalty(customer)} disabled={busy}>
-              {t('add')} {program?.model === 'POINTS' ? t('points') : t('stamp')}
-            </button>
-            <button className="secondary-button" onClick={() => onRedeem(customer)} disabled={busy}>
-              {t('redeemEligibleReward')}
-            </button>
+
+          <div className="resolved-customer-balance-row">
+            <div className="customer-live-balance">
+              <span className="balance-num">{customer.stamps}</span>
+              <span className="balance-unit">{customer.unit}</span>
+            </div>
+
+            {activeOffer && (
+              <div className={`counter-offer-status ${isUnlocked ? 'is-ready' : 'in-progress'}`}>
+                {isUnlocked ? (
+                  <span className="unlocked-pill">
+                    <Sparkles size={14} />
+                    <strong>{t('rewardReadyToRedeem', 'Reward ready to redeem!')}</strong>
+                  </span>
+                ) : (
+                  <span className="progress-pill">
+                    <Gift size={13} />
+                    <span>
+                      {Math.max(0, targetThreshold - customer.stamps)} {customer.unit} {t('until', 'until')}{' '}
+                      <strong>{activeOffer.name}</strong>
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Award points input & action */}
+          <div className="counter-award-section">
+            {program?.model === 'POINTS' ? (
+              <div className="counter-points-entry">
+                <label className="field-label" htmlFor="award-points-input">
+                  {t('enterPointsToAward', 'Points gained today')}:
+                </label>
+                <div className="award-input-row">
+                  <div className="award-input-wrap">
+                    <Coins size={15} className="input-prefix-icon" />
+                    <input
+                      id="award-points-input"
+                      type="number"
+                      min="1"
+                      max="1000000"
+                      step="1"
+                      value={pointsToAward}
+                      onChange={(e) => setPointsToAward(e.target.value)}
+                      placeholder={t('pointsExamplePlaceholder', 'e.g. 322')}
+                      className="points-entry-input"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-button counter-award-btn"
+                    onClick={handleAward}
+                    disabled={busy || !pointsToAward || Number(pointsToAward) <= 0}
+                  >
+                    <Plus size={15} />
+                    <span>
+                      {t('award', 'Award')}{' '}
+                      {pointsToAward && Number(pointsToAward) > 0 ? `${pointsToAward} ` : ''}
+                      {t('points', 'points')}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="counter-stamps-entry">
+                <button
+                  type="button"
+                  className="primary-button counter-award-btn"
+                  onClick={handleAward}
+                  disabled={busy}
+                >
+                  <Plus size={15} />
+                  <span>{t('awardOneStamp', 'Award +1 Stamp')}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Redeem reward button */}
+            <div className="counter-redeem-wrapper">
+              <button
+                type="button"
+                className={`secondary-button counter-redeem-action-btn ${isUnlocked ? 'is-active-unlocked' : ''}`}
+                onClick={handleRedeem}
+                disabled={busy || !isUnlocked}
+              >
+                <Gift size={15} />
+                <span>
+                  {t('redeemReward', 'Redeem Reward')}
+                  {activeOffer ? ` (${activeOffer.name})` : ''}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}
