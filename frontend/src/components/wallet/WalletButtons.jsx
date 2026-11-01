@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, Loader2 } from 'lucide-react'
 import { usePreferences } from '../../contexts/usePreferences'
+import { apiFetch, buildApiUrl } from '../../lib/api'
 
 // Official Apple Wallet icon mark (pocket with colored cards)
 function AppleWalletIcon() {
@@ -58,8 +59,7 @@ export default function WalletButtons({
     setDownloadingApple(true)
 
     try {
-      // Direct pass download endpoint with authentication
-      const endpoint = `/api/wallet/apple/${membershipId}`
+      const endpoint = buildApiUrl(`/api/wallet/apple/${membershipId}`)
       const response = await fetch(endpoint, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -67,8 +67,20 @@ export default function WalletButtons({
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || t('walletDownloadFailed', 'Failed to download wallet pass.'))
+        let errMsg = t('walletDownloadFailed', 'Failed to download wallet pass.')
+        try {
+          const errorData = await response.json()
+          if (errorData.error) errMsg = errorData.error
+        } catch {
+          // Response is not json
+        }
+        throw new Error(errMsg)
+      }
+
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.includes('pkpass') && !contentType.includes('octet-stream') && !contentType.includes('zip')) {
+        const text = await response.text()
+        throw new Error(`Unexpected server response: ${text.slice(0, 80)}`)
       }
 
       const blob = await response.blob()
@@ -100,23 +112,11 @@ export default function WalletButtons({
     setLoadingGoogle(true)
 
     try {
-      const endpoint = `/api/wallet/google/${membershipId}`
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Failed to connect to Google Wallet')
-      }
-
-      const data = await response.json()
+      const data = await apiFetch(`/api/wallet/google/${membershipId}`, accessToken)
       if (data.saveUrl) {
         window.open(data.saveUrl, '_blank')
       } else {
-        // Pass model generated in dev mode
+        // Pass model generated in dev mode / review mode
         setGoogleModalInfo(data)
       }
     } catch (err) {
@@ -135,7 +135,7 @@ export default function WalletButtons({
           type="button"
           className="wallet-btn apple-wallet-btn"
           onClick={handleAppleWallet}
-          disabled={downloadingApple}
+          disabled={downloadingApple || !membershipId}
           title={t('addToAppleWallet', 'Add to Apple Wallet')}
           aria-label={t('addToAppleWallet', 'Add to Apple Wallet')}
         >
@@ -160,7 +160,7 @@ export default function WalletButtons({
           type="button"
           className="wallet-btn google-wallet-btn"
           onClick={handleGoogleWallet}
-          disabled={loadingGoogle}
+          disabled={loadingGoogle || !membershipId}
           title={t('saveToGoogleWallet', 'Save to Google Wallet')}
           aria-label={t('saveToGoogleWallet', 'Save to Google Wallet')}
         >

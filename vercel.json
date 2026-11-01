@@ -2,9 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "https://loyaltea.onrender.com/api/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
 }
-

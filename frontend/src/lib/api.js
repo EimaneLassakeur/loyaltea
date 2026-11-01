@@ -1,5 +1,10 @@
-const rawApiBaseUrl = (import.meta.env.VITE_API_URL || '').trim()
-const apiBaseUrl = rawApiBaseUrl ? rawApiBaseUrl.replace(/\/+$/, '') : ''
+export const rawApiBaseUrl = (import.meta.env.VITE_API_URL || '').trim()
+export const apiBaseUrl = rawApiBaseUrl ? rawApiBaseUrl.replace(/\/+$/, '') : ''
+
+export function buildApiUrl(path) {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  return `${apiBaseUrl}${cleanPath}`
+}
 
 if (!apiBaseUrl && import.meta.env.DEV) {
   console.warn('VITE_API_URL is not set; API requests will use relative paths.')
