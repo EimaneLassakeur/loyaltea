@@ -257,6 +257,39 @@ test('LOYALTEA END-TO-END AUTONOMOUS AUDIT, WORKFLOW & SECURITY TEST SUITE', asy
     cleanupState.authIds.push(customer2Id)
   })
 
+  await t.test('1.6 Platform admin can edit and delete subscription plan', async () => {
+    const createRes = await makeRequest(app, 'POST', '/api/admin/subscription-plans', {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: {
+        name: `Temp Plan ${runTag}`,
+        description: 'Temporary plan for testing edit and delete',
+        price: 2500,
+        currency: 'DZD',
+        durationDays: 30,
+      },
+    })
+    assert.equal(createRes.status, 201)
+    const tempPlan = createRes.data.plan
+    assert.ok(tempPlan?.id)
+
+    const editRes = await makeRequest(app, 'PATCH', `/api/admin/subscription-plans/${tempPlan.id}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: {
+        name: `Edited Plan ${runTag}`,
+        price: 3000,
+      },
+    })
+    assert.equal(editRes.status, 200, `Edit plan failed: ${JSON.stringify(editRes.data)}`)
+    assert.equal(editRes.data.plan?.name, `Edited Plan ${runTag}`)
+    assert.equal(Number(editRes.data.plan?.price), 3000)
+
+    const delRes = await makeRequest(app, 'DELETE', `/api/admin/subscription-plans/${tempPlan.id}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    assert.equal(delRes.status, 200, `Delete plan failed: ${JSON.stringify(delRes.data)}`)
+    assert.equal(delRes.data.deleted, true)
+  })
+
   // -------------------------------------------------------------
   // PHASE 2: Business Offer & Loyalty Configuration Workflows
   // -------------------------------------------------------------
@@ -471,5 +504,13 @@ test('LOYALTEA END-TO-END AUTONOMOUS AUDIT, WORKFLOW & SECURITY TEST SUITE', asy
     assert.ok(Array.isArray(actRes.data.activities))
     assert.ok(actRes.data.activities.length <= 2)
     assert.ok(actRes.data.total >= 2)
+  })
+
+  await t.test('6.2 Customer activity returns 200 without 403 access denied', async () => {
+    const actRes = await makeRequest(app, 'GET', '/api/activity?limit=5&offset=0', {
+      headers: { Authorization: `Bearer ${customer1Token}` },
+    })
+    assert.equal(actRes.status, 200, `Customer activity failed: ${JSON.stringify(actRes.data)}`)
+    assert.ok(Array.isArray(actRes.data.activities))
   })
 })

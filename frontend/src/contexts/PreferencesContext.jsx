@@ -6,6 +6,15 @@ const THEME_KEY = 'loyaltea.theme'
 
 const translations = {
   en: {
+    planName: 'Plan Name',
+    editPlan: 'Edit Subscription Plan',
+    planDeleted: 'Plan deleted successfully',
+    planUpdated: 'Plan updated successfully',
+    confirmDeletePlan: 'Are you sure you want to delete this subscription plan?',
+    manualJoinPlaceholder: 'Enter business slug or program ID...',
+    joinWithCode: 'Join with Code',
+    enterCodeRequired: 'Please enter a business code or program ID',
+    noCameraHelp: 'No camera? Enter business code or ID manually:',
     businessOffers: 'Loyalty Offers',
     singleActiveOfferSubtitle: 'Manage your customer loyalty offer. Each business can have one active offer at a time.',
     singleOfferRuleNotice: 'To keep loyalty simple for your customers, only one offer can be active at a time. Customers accumulate progress toward this active offer.',
@@ -422,6 +431,15 @@ const translations = {
   },
 
   fr: {
+    planName: 'Nom du forfait',
+    editPlan: 'Modifier le forfait',
+    planDeleted: 'Forfait supprimé avec succès',
+    planUpdated: 'Forfait mis à jour avec succès',
+    confirmDeletePlan: 'Êtes-vous sûr de vouloir supprimer ce forfait ?',
+    manualJoinPlaceholder: 'Entrez le code ou identifiant du commerce...',
+    joinWithCode: 'Rejoindre avec le code',
+    enterCodeRequired: 'Veuillez saisir un code de commerce ou un identifiant',
+    noCameraHelp: 'Pas de caméra ? Entrez le code ou l\'identifiant manuellement :',
     businessOffers: 'Offres de fidélité',
     singleActiveOfferSubtitle: 'Gérez votre offre de fidélité client. Chaque commerce peut avoir une seule offre active à la fois.',
     singleOfferRuleNotice: 'Pour garder la fidélité simple pour vos clients, une seule offre peut être active à la fois.',
@@ -839,6 +857,15 @@ const translations = {
   },
 
   ar: {
+    planName: 'اسم الخطة',
+    editPlan: 'تعديل الخطة',
+    planDeleted: 'تم حذف الخطة بنجاح',
+    planUpdated: 'تم تحديث الخطة بنجاح',
+    confirmDeletePlan: 'هل أنت متأكد من رغبتك في حذف هذه الخطة؟',
+    manualJoinPlaceholder: 'أدخل رمز أو معرّف المتجر...',
+    joinWithCode: 'الانضمام بالرمز',
+    enterCodeRequired: 'يرجى إدخال رمز أو معرّف المتجر',
+    noCameraHelp: 'لا توجد كاميرا؟ أدخل رمز المتجر يدوياً:',
     businessOffers: 'عروض الولاء',
     singleActiveOfferSubtitle: 'إدارة عرض ولاء العملاء الخاص بك. يمكن لكل نشاط تجاري الحصول على عرض نشط واحد في كل مرة.',
     singleOfferRuleNotice: 'للحفاظ على بساطة الولاء لعملائك، يمكن أن يكون عرض واحد فقط نشطاً في كل مرة. يجمع العملاء نقاطهم للوصول إلى هذا العرض.',

@@ -1,3 +1,16 @@
-supabase/*
-!supabase/migrations/
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Production build outputs
+dist/
+build/
+
+# Graphify
+graphify-out/

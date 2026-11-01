@@ -91,7 +91,7 @@ export async function getPendingBusinessSubscription(userId) {
 }
 
 export async function getSubscriptionPlans(includeInactive = false) {
-  const result = await pool.query(`select id, name, description, price, currency, duration_days, features, is_active from public.subscription_plans ${includeInactive ? '' : 'where is_active'} order by price, name`)
+  const result = await pool.query(`select id, name, description, price, currency, duration_days, features, is_active from public.subscription_plans where deleted_at is null ${includeInactive ? '' : 'and is_active'} order by price, name`)
   return result.rows
 }
 
@@ -300,10 +300,46 @@ export async function createSubscriptionPlan({ actorUserId, name, description, p
   return result.rows[0]
 }
 
+export async function deleteSubscriptionPlan({ actorUserId, planId }) {
+  const subCount = await pool.query('select count(*)::int as count from public.subscriptions where plan_id = $1', [planId])
+  if (subCount.rows[0]?.count > 0) {
+    const result = await pool.query('update public.subscription_plans set is_active = false, deleted_at = now(), updated_at = now() where id = $1 returning *', [planId])
+    if (!result.rowCount) throw httpError(404, 'Subscription plan was not found')
+    await pool.query(`insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.deleted', 'subscription_plan', $2, $3)`, [actorUserId, planId, JSON.stringify({ soft_delete: true })])
+    return { id: planId, deleted: true, soft: true }
+  } else {
+    const result = await pool.query('delete from public.subscription_plans where id = $1 returning *', [planId])
+    if (!result.rowCount) throw httpError(404, 'Subscription plan not found')
+    await pool.query(`insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.deleted', 'subscription_plan', $2, $3)`, [actorUserId, planId, JSON.stringify({ soft_delete: false })])
+    return { id: planId, deleted: true, soft: false }
+  }
+}
+
 export async function updateSubscriptionPlan({ actorUserId, planId, name, description, price, currency, durationDays, features, isActive }) {
-  const result = await pool.query('update public.subscription_plans set name = $2, description = $3, price = $4, currency = $5, duration_days = $6, features = $7, is_active = $8, updated_at = now() where id = $1 returning *', [planId, name, description || null, price, currency || 'DZD', durationDays, JSON.stringify(features || {}), isActive])
-  if (!result.rowCount) throw httpError(404, 'Subscription plan was not found')
-  await pool.query(`insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.updated', 'subscription_plan', $2, $3)`, [actorUserId, planId, JSON.stringify({ is_active: isActive })])
+  const existing = await pool.query('select * from public.subscription_plans where id = $1 and deleted_at is null', [planId])
+  if (!existing.rowCount) throw httpError(404, 'Subscription plan was not found')
+  const cur = existing.rows[0]
+
+  const updatedName = name !== undefined ? name.trim() : cur.name
+  const updatedDesc = description !== undefined ? (description?.trim() || null) : cur.description
+  const updatedPrice = price !== undefined ? Number(price) : cur.price
+  const updatedCurrency = currency !== undefined ? currency : cur.currency
+  const updatedDuration = durationDays !== undefined ? Number(durationDays) : cur.duration_days
+  const updatedFeatures = features !== undefined ? features : cur.features
+  const updatedActive = isActive !== undefined ? Boolean(isActive) : cur.is_active
+
+  if (!updatedName) throw httpError(400, 'Plan name cannot be empty')
+  if (!Number.isFinite(updatedPrice) || updatedPrice < 0) throw httpError(400, 'Price must be a non-negative number')
+  if (!Number.isInteger(updatedDuration) || updatedDuration <= 0) throw httpError(400, 'Duration days must be a positive integer')
+
+  const result = await pool.query(
+    'update public.subscription_plans set name = $2, description = $3, price = $4, currency = $5, duration_days = $6, features = $7, is_active = $8, updated_at = now() where id = $1 returning *',
+    [planId, updatedName, updatedDesc, updatedPrice, updatedCurrency, updatedDuration, JSON.stringify(updatedFeatures || {}), updatedActive]
+  )
+  await pool.query(
+    `insert into public.audit_logs (actor_user_id, action, target_type, target_id, metadata) values ($1, 'subscription_plan.updated', 'subscription_plan', $2, $3)`,
+    [actorUserId, planId, JSON.stringify({ is_active: updatedActive, name: updatedName, price: updatedPrice })]
+  )
   return result.rows[0]
 }
 

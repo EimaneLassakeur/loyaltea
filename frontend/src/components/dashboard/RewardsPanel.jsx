@@ -319,13 +319,7 @@ export default function RewardsPanel({ program, _businessId, accessToken, onProg
       <section className="panel rewards-panel">
         <div className="panel-heading rewards-panel-heading">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <h2>{t('businessOffers', 'Loyalty Offers')}</h2>
-              <span className="status-pill ready">
-                {isProgramPoints ? <Coins size={12} style={{ marginRight: '4px' }} /> : <Stamp size={12} style={{ marginRight: '4px' }} />}
-                {isProgramPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
-              </span>
-            </div>
+            <h2>{t('businessOffers', 'Loyalty Offers')}</h2>
             <p>{t('singleActiveOfferSubtitle', 'Manage your customer loyalty offer. Each business can have one active offer at a time.')}</p>
           </div>
           <button

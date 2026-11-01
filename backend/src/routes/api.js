@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit'
 import { config } from '../config.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { createAdminAuthClient, createAuthClient, createPublicClient, createUserClient } from '../supabase.js'
-import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, deleteOrArchiveBusiness, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, pool, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
+import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, deleteOrArchiveBusiness, deleteSubscriptionPlan, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, pool, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
 import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 import { normalizeEmail, normalizePhone } from '../authUtils.js'
 
@@ -413,18 +413,14 @@ router.get('/activity', requireRoles(...allRoles), async (request, response, nex
         params.push(requestedBusinessId)
       }
     } else if (staffRoles.includes(request.profile?.role)) {
-      if (requestedBusinessId) {
-        if (!request.businessIds.includes(requestedBusinessId)) {
-          return response.status(403).json({ error: 'Business access denied' })
-        }
+      if (requestedBusinessId && request.businessIds.includes(requestedBusinessId)) {
         conditions.push(`t.business_id = $${pIdx++}`)
         params.push(requestedBusinessId)
-      } else {
-        if (!request.businessIds.length) {
-          return response.json({ activities: [], hasMore: false, total: 0 })
-        }
-        conditions.push(`t.business_id = ANY($${pIdx++}::uuid[])`)
+      } else if (request.businessIds.length > 0) {
+        conditions.push(`t.business_id = $${pIdx++}`)
         params.push(request.businessIds)
+      } else {
+        return response.json({ activities: [], hasMore: false, total: 0 })
       }
     } else if (request.profile?.role === 'CUSTOMER') {
       conditions.push(`m.customer_id = $${pIdx++}`)
@@ -434,7 +430,9 @@ router.get('/activity', requireRoles(...allRoles), async (request, response, nex
         params.push(requestedBusinessId)
       }
     } else {
-      return response.status(403).json({ error: 'Access denied' })
+      // Fallback: customer activity for authenticated user
+      conditions.push(`m.customer_id = $${pIdx++}`)
+      params.push(request.user.id)
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -516,9 +514,28 @@ router.post('/admin/subscription-plans', requireRoles('PLATFORM_ADMIN'), async (
 
 router.patch('/admin/subscription-plans/:planId', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
   try {
+    if (!isUuid(request.params.planId)) return response.status(400).json({ error: 'Invalid plan identifier' })
     const { name, description, price, currency, durationDays, features, isActive } = request.body || {}
-    if (!isUuid(request.params.planId) || !name?.trim() || !Number.isFinite(Number(price)) || Number(price) < 0 || !Number.isInteger(Number(durationDays)) || Number(durationDays) <= 0 || typeof isActive !== 'boolean') return response.status(400).json({ error: 'Valid plan fields are required' })
-    return response.json({ plan: await updateSubscriptionPlan({ actorUserId: request.user.id, planId: request.params.planId, name: name.trim(), description, price: Number(price), currency, durationDays: Number(durationDays), features, isActive }) })
+    const plan = await updateSubscriptionPlan({
+      actorUserId: request.user.id,
+      planId: request.params.planId,
+      name,
+      description,
+      price,
+      currency,
+      durationDays,
+      features,
+      isActive,
+    })
+    return response.json({ plan })
+  } catch (error) { return next(error) }
+})
+
+router.delete('/admin/subscription-plans/:planId', requireRoles('PLATFORM_ADMIN'), async (request, response, next) => {
+  try {
+    if (!isUuid(request.params.planId)) return response.status(400).json({ error: 'Invalid plan identifier' })
+    const result = await deleteSubscriptionPlan({ actorUserId: request.user.id, planId: request.params.planId })
+    return response.json({ message: 'Subscription plan deleted successfully', ...result })
   } catch (error) { return next(error) }
 })
 
@@ -1059,7 +1076,7 @@ router.patch('/programs/:programId', requireRoles(...managerRoles), async (reque
           })
         }
       }
-      updates.push(`is_active = ${idx++}`)
+      updates.push(`is_active = $${idx++}`)
       values.push(willBeActive)
     }
 
@@ -1090,7 +1107,7 @@ router.patch('/rewards/:rewardId', requireRoles(...managerRoles), async (request
     const { name, description, image_url, required_stamps, required_points, expires_at, is_active } = request.body || {}
 
     const rewResult = await pool.query(
-      `SELECT r.id, r.program_id, p.business_id 
+      `SELECT r.id, r.program_id, p.business_id, p.model 
        FROM public.rewards r 
        JOIN public.loyalty_programs p ON p.id = r.program_id 
        WHERE r.id = $1`,
@@ -1116,18 +1133,24 @@ router.patch('/rewards/:rewardId', requireRoles(...managerRoles), async (request
       updates.push(`image_url = $${idx++}`)
       values.push(image_url?.trim() || null)
     }
-    if (required_stamps !== undefined) {
-      const val = Number(required_stamps)
-      if (!Number.isInteger(val) || val < 0) return response.status(400).json({ error: 'required_stamps must be a non-negative integer' })
-      updates.push(`required_stamps = $${idx++}`)
-      values.push(val)
-    }
-    if (required_points !== undefined) {
+
+    let newModel = null
+    if (required_points !== undefined && required_points !== null) {
       const val = Number(required_points)
-      if (!Number.isInteger(val) || val < 0) return response.status(400).json({ error: 'required_points must be a non-negative integer' })
+      if (!Number.isFinite(val) || val <= 0) return response.status(400).json({ error: 'required_points must be a positive number' })
       updates.push(`required_points = $${idx++}`)
       values.push(val)
+      updates.push('required_stamps = NULL')
+      newModel = 'POINTS'
+    } else if (required_stamps !== undefined && required_stamps !== null) {
+      const val = Number(required_stamps)
+      if (!Number.isInteger(val) || val <= 0) return response.status(400).json({ error: 'required_stamps must be a positive whole number' })
+      updates.push(`required_stamps = $${idx++}`)
+      values.push(val)
+      updates.push('required_points = NULL')
+      newModel = 'STAMPS'
     }
+
     if (expires_at !== undefined) {
       updates.push(`expires_at = $${idx++}`)
       values.push(expires_at ? new Date(expires_at).toISOString() : null)
@@ -1144,12 +1167,23 @@ router.patch('/rewards/:rewardId', requireRoles(...managerRoles), async (request
       `UPDATE public.rewards SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
       values
     )
+
+    if (newModel && newModel !== rewResult.rows[0].model) {
+      await pool.query('UPDATE public.loyalty_programs SET model = $1, updated_at = now() WHERE id = $2', [newModel, rewResult.rows[0].program_id])
+    }
+
     return response.json({ reward: result.rows[0] })
   } catch (error) {
     if (error.code === '23505' && (error.constraint === 'rewards_single_active_offer_idx' || /rewards_single_active_offer/i.test(error.message || ''))) {
       return response.status(409).json({
         error: 'An active offer already exists for this business. Deactivate or delete the current offer before activating another offer.',
         code: 'ACTIVE_OFFER_EXISTS',
+      })
+    }
+    if (error.code === '23514') {
+      return response.status(400).json({
+        error: 'Invalid reward requirements: offer must require either stamps (>0) or points (>0), not both or neither.',
+        code: 'INVALID_REWARD_SPEC',
       })
     }
     return next(error)

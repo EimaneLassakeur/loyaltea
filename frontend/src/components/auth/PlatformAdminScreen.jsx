@@ -1,4 +1,4 @@
-import { Coffee, BarChart3, Users, LogOut, Activity, Store, UserRound, ArrowUpRight, Menu, Mail, Phone, MessageSquare, X } from 'lucide-react'
+import { Coffee, BarChart3, Users, LogOut, Activity, Store, UserRound, ArrowUpRight, Menu, Mail, Phone, MessageSquare, X, Edit2, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import PreferencesControls from '../PreferencesControls'
@@ -38,6 +38,9 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
   const [provisionMessage, setProvisionMessage] = useState('')
   const [planForm, setPlanForm] = useState({ name: '', description: '', price: '', durationDays: '30', currency: 'DZD' })
   const [planMessage, setPlanMessage] = useState('')
+  const [editingPlan, setEditingPlan] = useState(null)
+  const [editPlanForm, setEditPlanForm] = useState({ name: '', description: '', price: '', durationDays: '' })
+  const [editPlanError, setEditPlanError] = useState('')
 
   const filteredBusinesses = useMemo(() => businesses.filter((business) => `${business.name} ${business.slug}`.toLowerCase().includes(businessSearch.toLowerCase())), [businesses, businessSearch])
   const filteredArchivedBusinesses = useMemo(() => archivedBusinesses.filter((business) => `${business.name} ${business.slug}`.toLowerCase().includes(businessSearch.toLowerCase())), [archivedBusinesses, businessSearch])
@@ -310,7 +313,185 @@ export default function PlatformAdminScreen({ session, profile, onSignOut }) {
               </>
             )}
           </section>}
-          {activeView === 'Dashboard' && <section className="panel info-panel plan-management-panel"><div className="panel-heading"><div><h2>{t('subscriptionPlans')}</h2><p>{t('managePlansCopy')}</p></div></div><form className="plan-form" onSubmit={async (event) => { event.preventDefault(); setPlanMessage(''); try { const result = await apiFetch('/api/admin/subscription-plans', session.access_token, { method: 'POST', body: JSON.stringify({ ...planForm, price: Number(planForm.price), durationDays: Number(planForm.durationDays) }) }); setPlans((current) => [...current, result.plan]); setPlanForm({ name: '', description: '', price: '', durationDays: '30', currency: 'DZD' }); setPlanMessage(t('planCreated')); } catch (err) { setPlanMessage(err.message) } }}><input required placeholder={t('planNamePlaceholder')} value={planForm.name} onChange={(event) => setPlanForm({ ...planForm, name: event.target.value })} /><input placeholder={t('descriptionPlaceholder')} value={planForm.description} onChange={(event) => setPlanForm({ ...planForm, description: event.target.value })} /><input required min="0" step="0.01" type="number" placeholder={t('pricePlaceholder')} value={planForm.price} onChange={(event) => setPlanForm({ ...planForm, price: event.target.value })} /><input required min="1" step="1" type="number" placeholder={t('durationDaysPlaceholder')} value={planForm.durationDays} onChange={(event) => setPlanForm({ ...planForm, durationDays: event.target.value })} /><button className="primary-button" type="submit">{t('createPlan')}</button></form>{planMessage && <p className="form-message">{planMessage}</p>}<div className="plan-list">{plans.map((plan) => <div className="plan-row" key={plan.id}><div><strong>{plan.name}</strong><small>{plan.price} {plan.currency} · {plan.duration_days} {t('days')}</small></div><button className="secondary-button" onClick={async () => { try { const result = await apiFetch(`/api/admin/subscription-plans/${plan.id}`, session.access_token, { method: 'PATCH', body: JSON.stringify({ name: plan.name, description: plan.description, price: plan.price, currency: plan.currency, durationDays: plan.duration_days, features: plan.features, isActive: !plan.is_active }) }); setPlans((current) => current.map((item) => item.id === plan.id ? result.plan : item)); } catch (err) { setPlanMessage(err.message) } }}>{plan.is_active ? t('deactivate') : t('activate')}</button></div>)}</div></section>}
+          {activeView === 'Dashboard' && (
+            <section className="panel info-panel plan-management-panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>{t('subscriptionPlans')}</h2>
+                  <p>{t('managePlansCopy')}</p>
+                </div>
+              </div>
+              <form className="plan-form" onSubmit={async (event) => {
+                event.preventDefault()
+                setPlanMessage('')
+                try {
+                  const result = await apiFetch('/api/admin/subscription-plans', session.access_token, {
+                    method: 'POST',
+                    body: JSON.stringify({ ...planForm, price: Number(planForm.price), durationDays: Number(planForm.durationDays) })
+                  })
+                  setPlans((current) => [...current, result.plan])
+                  setPlanForm({ name: '', description: '', price: '', durationDays: '30', currency: 'DZD' })
+                  setPlanMessage(t('planCreated'))
+                } catch (err) {
+                  setPlanMessage(err.message)
+                }
+              }}>
+                <input required placeholder={t('planNamePlaceholder')} value={planForm.name} onChange={(event) => setPlanForm({ ...planForm, name: event.target.value })} />
+                <input placeholder={t('descriptionPlaceholder')} value={planForm.description} onChange={(event) => setPlanForm({ ...planForm, description: event.target.value })} />
+                <input required min="0" step="0.01" type="number" placeholder={t('pricePlaceholder')} value={planForm.price} onChange={(event) => setPlanForm({ ...planForm, price: event.target.value })} />
+                <input required min="1" step="1" type="number" placeholder={t('durationDaysPlaceholder')} value={planForm.durationDays} onChange={(event) => setPlanForm({ ...planForm, durationDays: event.target.value })} />
+                <button className="primary-button" type="submit">{t('createPlan')}</button>
+              </form>
+              {planMessage && <p className="form-message">{planMessage}</p>}
+              <div className="plan-list">
+                {plans.map((plan) => (
+                  <div className="plan-row" key={plan.id}>
+                    <div>
+                      <strong>{plan.name}</strong>
+                      <small>{plan.price} {plan.currency} · {plan.duration_days} {t('days')}</small>
+                      {plan.description && <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>{plan.description}</p>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          setEditingPlan(plan)
+                          setEditPlanForm({
+                            name: plan.name,
+                            description: plan.description || '',
+                            price: String(plan.price),
+                            durationDays: String(plan.duration_days),
+                          })
+                          setEditPlanError('')
+                        }}
+                      >
+                        <Edit2 size={14} style={{ marginRight: '4px' }} />
+                        {t('edit', 'Edit')}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={async () => {
+                          try {
+                            const result = await apiFetch(`/api/admin/subscription-plans/${plan.id}`, session.access_token, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ isActive: !plan.is_active })
+                            })
+                            setPlans((current) => current.map((item) => item.id === plan.id ? result.plan : item))
+                          } catch (err) {
+                            setPlanMessage(err.message)
+                          }
+                        }}
+                      >
+                        {plan.is_active ? t('deactivate') : t('activate')}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title={t('delete', 'Delete')}
+                        aria-label={t('delete', 'Delete')}
+                        onClick={async () => {
+                          if (!window.confirm(t('confirmDeletePlan', `Are you sure you want to delete the plan "${plan.name}"?`))) return
+                          try {
+                            await apiFetch(`/api/admin/subscription-plans/${plan.id}`, session.access_token, { method: 'DELETE' })
+                            setPlans((current) => current.filter((item) => item.id !== plan.id))
+                            setPlanMessage(t('planDeleted', 'Plan deleted successfully'))
+                          } catch (err) {
+                            setPlanMessage(err.message)
+                          }
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {editingPlan && (
+                <div className="qr-modal-backdrop" role="presentation" onClick={() => setEditingPlan(null)}>
+                  <section className="qr-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+                    <button className="icon-button qr-close" onClick={() => setEditingPlan(null)} aria-label={t('close', 'Close')}>
+                      <X size={18} />
+                    </button>
+                    <p className="eyebrow">{t('subscriptionPlans', 'Subscription Plans')}</p>
+                    <h2>{t('editPlan', 'Edit Subscription Plan')}</h2>
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault()
+                        setEditPlanError('')
+                        try {
+                          const result = await apiFetch(`/api/admin/subscription-plans/${editingPlan.id}`, session.access_token, {
+                            method: 'PATCH',
+                            body: JSON.stringify({
+                              name: editPlanForm.name.trim(),
+                              description: editPlanForm.description.trim() || null,
+                              price: Number(editPlanForm.price),
+                              durationDays: Number(editPlanForm.durationDays),
+                            }),
+                          })
+                          setPlans((cur) => cur.map((p) => p.id === editingPlan.id ? result.plan : p))
+                          setEditingPlan(null)
+                          setPlanMessage(t('planUpdated', 'Plan updated successfully'))
+                        } catch (err) {
+                          setEditPlanError(err.message || 'Could not update plan')
+                        }
+                      }}
+                      style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}
+                    >
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'start' }}>
+                        <span>{t('planName', 'Plan Name')}</span>
+                        <input
+                          required
+                          value={editPlanForm.name}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, name: e.target.value })}
+                        />
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'start' }}>
+                        <span>{t('descriptionPlaceholder', 'Description')}</span>
+                        <input
+                          value={editPlanForm.description}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, description: e.target.value })}
+                        />
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'start' }}>
+                        <span>{t('pricePlaceholder', 'Price (DZD)')}</span>
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={editPlanForm.price}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, price: e.target.value })}
+                        />
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'start' }}>
+                        <span>{t('durationDaysPlaceholder', 'Duration (Days)')}</span>
+                        <input
+                          required
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={editPlanForm.durationDays}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, durationDays: e.target.value })}
+                        />
+                      </label>
+                      {editPlanError && <p className="form-error">{editPlanError}</p>}
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+                        <button type="button" className="secondary-button" onClick={() => setEditingPlan(null)}>
+                          {t('cancel', 'Cancel')}
+                        </button>
+                        <button type="submit" className="primary-button">
+                          {t('save', 'Save')}
+                        </button>
+                      </div>
+                    </form>
+                  </section>
+                </div>
+              )}
+            </section>
+          )}
           {error && <p className="form-error">{t('loadError')}: {error}</p>}
           {selectedBusiness && (
             <section className="panel info-panel selected-business-details">

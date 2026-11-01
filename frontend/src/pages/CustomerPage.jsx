@@ -47,6 +47,8 @@ export default function CustomerPage({ session, profile, onSignOut }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [joinScannerOpen, setJoinScannerOpen] = useState(false)
+  const [manualCode, setManualCode] = useState('')
+  const [manualCodeError, setManualCodeError] = useState('')
   const [selectedMembership, setSelectedMembership] = useState(null)
   const [tokenModalMembership, setTokenModalMembership] = useState(null)
   const [copiedToken, setCopiedToken] = useState(false)
@@ -159,6 +161,20 @@ export default function CustomerPage({ session, profile, onSignOut }) {
       window.location.assign(`/join/business/${encodeURIComponent(raw)}`)
     },
     [stopScanner]
+  )
+
+  const handleManualCodeSubmit = useCallback(
+    (e) => {
+      if (e) e.preventDefault()
+      const trimmed = (manualCode || '').trim()
+      if (!trimmed) {
+        setManualCodeError(t('enterCodeRequired', 'Please enter a business code or program ID'))
+        return
+      }
+      setManualCodeError('')
+      handleDecodedJoinCode(trimmed)
+    },
+    [manualCode, handleDecodedJoinCode, t]
   )
 
   const startScanner = useCallback(async () => {
@@ -321,11 +337,26 @@ export default function CustomerPage({ session, profile, onSignOut }) {
         <div>
           <p className="eyebrow">{t('loyaltyWallet', 'Loyalty Wallet')}</p>
           <h1>{t('everyVisitCounts', 'Every visit brings you closer to your reward')}</h1>
-          <p className="heading-copy">{t('scanBusinessToJoin', 'Scan a business QR code to join their loyalty program')}</p>
+          <p className="heading-copy">{t('scanBusinessToJoin', 'Scan a business QR code or enter their code to join')}</p>
         </div>
-        <button className="primary-button" onClick={() => setJoinScannerOpen(true)}>
-          <Camera size={16} /> {t('scanBusinessQr', 'Scan Business QR')}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'flex-start' }}>
+          <button className="primary-button" onClick={() => setJoinScannerOpen(true)}>
+            <Camera size={16} /> {t('scanBusinessQr', 'Scan Business QR')}
+          </button>
+          <form onSubmit={handleManualCodeSubmit} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', width: '100%', maxWidth: '480px' }}>
+            <input
+              type="text"
+              value={manualCode}
+              onChange={(e) => { setManualCode(e.target.value); setManualCodeError(''); }}
+              placeholder={t('manualJoinPlaceholder', 'Enter business slug or program ID...')}
+              style={{ flex: '1 1 200px', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}
+            />
+            <button type="submit" className="secondary-button" style={{ whiteSpace: 'nowrap' }}>
+              <KeyRound size={15} style={{ marginRight: '4px' }} /> {t('joinWithCode', 'Join with Code')}
+            </button>
+          </form>
+          {manualCodeError && <p className="form-error" style={{ margin: 0 }}>{manualCodeError}</p>}
+        </div>
       </section>
 
       {memberships.length === 0 ? (
@@ -553,6 +584,22 @@ export default function CustomerPage({ session, profile, onSignOut }) {
               <button className="secondary-button" onClick={scannerActive ? stopScanner : startScanner}>
                 <Camera size={15} /> {scannerActive ? t('stopScanner', 'Stop Scanner') : t('startScanner', 'Start Scanner')}
               </button>
+            </div>
+            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)', width: '100%' }}>
+              <p style={{ fontSize: '0.9rem', marginBottom: '8px', opacity: 0.8 }}>{t('noCameraHelp', 'No camera? Enter business code or ID manually:')}</p>
+              <form onSubmit={handleManualCodeSubmit} style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                <input
+                  type="text"
+                  value={manualCode}
+                  onChange={(e) => { setManualCode(e.target.value); setManualCodeError(''); }}
+                  placeholder={t('manualJoinPlaceholder', 'Business slug or program ID...')}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                />
+                <button type="submit" className="primary-button">
+                  {t('join', 'Join')}
+                </button>
+              </form>
+              {manualCodeError && <p className="form-error" style={{ marginTop: '4px' }}>{manualCodeError}</p>}
             </div>
           </section>
         </div>
