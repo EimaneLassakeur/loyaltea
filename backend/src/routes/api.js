@@ -10,6 +10,7 @@ import { normalizeEmail, normalizePhone } from '../authUtils.js'
 const router = Router()
 const staffRoles = ['BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'PLATFORM_ADMIN']
 const managerRoles = ['BUSINESS_OWNER', 'MANAGER', 'PLATFORM_ADMIN']
+const allRoles = ['PLATFORM_ADMIN', 'BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'CUSTOMER']
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many authentication attempts. Try again later.' } })
 const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many session refresh attempts. Try again shortly.', code: 'RATE_LIMIT_EXCEEDED' } })
 const loyaltyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many loyalty requests. Try again shortly.' } })
@@ -269,7 +270,7 @@ router.get('/public/programs/:programId', publicLimiter, async (request, respons
   }
 })
 
-router.get('/public/businesses/:businessSlug', publicLimiter, async (request, response, next) => {
+router.get(['/public/businesses/:businessSlug', '/public/businesses/by-slug/:businessSlug'], publicLimiter, async (request, response, next) => {
   try {
     const slug = (request.params.businessSlug || '').trim().toLowerCase()
     if (!slug) return response.status(400).json({ error: 'Business slug is required' })
@@ -394,7 +395,7 @@ router.get('/customer/memberships', async (request, response, next) => {
   }
 })
 
-router.get('/activity', async (request, response, next) => {
+router.get('/activity', requireRoles(...allRoles), async (request, response, next) => {
   try {
     const rawLimit = Number(request.query.limit)
     const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 2
@@ -408,7 +409,7 @@ router.get('/activity', async (request, response, next) => {
 
     if (request.profile?.role === 'PLATFORM_ADMIN') {
       if (requestedBusinessId) {
-        conditions.push(`t.business_id = ${pIdx++}`)
+        conditions.push(`t.business_id = $${pIdx++}`)
         params.push(requestedBusinessId)
       }
     } else if (staffRoles.includes(request.profile?.role)) {
@@ -416,20 +417,20 @@ router.get('/activity', async (request, response, next) => {
         if (!request.businessIds.includes(requestedBusinessId)) {
           return response.status(403).json({ error: 'Business access denied' })
         }
-        conditions.push(`t.business_id = ${pIdx++}`)
+        conditions.push(`t.business_id = $${pIdx++}`)
         params.push(requestedBusinessId)
       } else {
         if (!request.businessIds.length) {
           return response.json({ activities: [], hasMore: false, total: 0 })
         }
-        conditions.push(`t.business_id = ANY(${pIdx++})`)
+        conditions.push(`t.business_id = ANY($${pIdx++}::uuid[])`)
         params.push(request.businessIds)
       }
     } else if (request.profile?.role === 'CUSTOMER') {
-      conditions.push(`m.customer_id = ${pIdx++}`)
+      conditions.push(`m.customer_id = $${pIdx++}`)
       params.push(request.user.id)
       if (requestedBusinessId) {
-        conditions.push(`t.business_id = ${pIdx++}`)
+        conditions.push(`t.business_id = $${pIdx++}`)
         params.push(requestedBusinessId)
       }
     } else {
@@ -471,7 +472,7 @@ router.get('/activity', async (request, response, next) => {
       LEFT JOIN public.customers c ON c.id = m.customer_id
       ${whereClause}
       ORDER BY t.created_at DESC, t.id DESC
-      LIMIT ${queryParams.length - 1} OFFSET ${queryParams.length}
+      LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}
     `
     const listRes = await pool.query(listQuery, queryParams)
     const activities = listRes.rows
@@ -1258,20 +1259,28 @@ async function insertTable(request, response, next, table, allowedFields, requir
           })
         }
       }
-      if (program.model === 'STAMPS') {
+      const chosenModel = (payload.required_points !== undefined && payload.required_points !== null)
+        ? 'POINTS'
+        : (payload.required_stamps !== undefined && payload.required_stamps !== null ? 'STAMPS' : program.model)
+
+      if (chosenModel === 'STAMPS') {
         const stamps = Number(payload.required_stamps)
         if (!Number.isInteger(stamps) || stamps <= 0) {
-          return response.status(400).json({ error: 'Required stamps must be a positive whole number for stamps-based programs', code: 'INVALID_REQUIRED_STAMPS' })
+          return response.status(400).json({ error: 'Required stamps must be a positive whole number for stamps-based offers', code: 'INVALID_REQUIRED_STAMPS' })
         }
         payload.required_stamps = stamps
         payload.required_points = null
-      } else if (program.model === 'POINTS') {
+      } else if (chosenModel === 'POINTS') {
         const points = Number(payload.required_points)
-        if (Number.isNaN(points) || points <= 0) {
-          return response.status(400).json({ error: 'Required points must be greater than 0 for points-based programs', code: 'INVALID_REQUIRED_POINTS' })
+        if (!Number.isFinite(points) || points <= 0) {
+          return response.status(400).json({ error: 'Required points must be greater than 0 for points-based offers', code: 'INVALID_REQUIRED_POINTS' })
         }
         payload.required_points = points
         payload.required_stamps = null
+      }
+
+      if (chosenModel !== program.model) {
+        await pool.query('UPDATE public.loyalty_programs SET model = $1, updated_at = now() WHERE id = $2', [chosenModel, payload.program_id])
       }
     } else if (payload.program_id) {
       const { data: program, error: programError } = await request.supabase.from('loyalty_programs').select('business_id').eq('id', payload.program_id).maybeSingle()

@@ -12,7 +12,7 @@ export default function App() {
   const { session, profile, loading, error, signIn, signUp, signOut, clearError } = useAuth()
   const { t } = usePreferences()
   const businessJoinMatch = window.location.pathname.match(/^\/join\/business\/([^/]+)\/?$/)
-  const legacyProgramJoinMatch = window.location.pathname.match(/^\/join\/([^/]+)\/?$/)
+  const legacyProgramJoinMatch = window.location.pathname.match(/^\/join\/(?!business(?:\/|$))([^/]+)\/?$/)
 
   if (loading) return <div className="app-state"><strong>{t('loadingWorkspace')}</strong></div>
   if (businessJoinMatch) return <JoinScreen businessSlug={businessJoinMatch[1]} session={session} profile={profile} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />

@@ -1,7 +1,8 @@
-const apiBaseUrl = import.meta.env.VITE_API_URL
+const rawApiBaseUrl = (import.meta.env.VITE_API_URL || '').trim()
+const apiBaseUrl = rawApiBaseUrl ? rawApiBaseUrl.replace(/\/+$/, '') : ''
 
-if (!apiBaseUrl) {
-  throw new Error('VITE_API_URL is not configured')
+if (!apiBaseUrl && import.meta.env.DEV) {
+  console.warn('VITE_API_URL is not set; API requests will use relative paths.')
 }
 
 export const SESSION_KEY = 'loyaltea.session'
