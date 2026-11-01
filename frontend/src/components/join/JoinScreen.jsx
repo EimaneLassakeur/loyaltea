@@ -6,6 +6,7 @@ import { apiFetch } from '../../lib/api'
 import { normalizeEmail, normalizePhone } from '../../lib/authUtils'
 import PreferencesControls from '../PreferencesControls'
 import { usePreferences } from '../../contexts/usePreferences'
+import WalletButtons from '../wallet/WalletButtons'
 
 export default function JoinScreen({ businessSlug, programId, session, profile, onSignIn, onSignUp, onClearError }) {
   const { t } = usePreferences()
@@ -304,6 +305,16 @@ export default function JoinScreen({ businessSlug, programId, session, profile, 
                   {program.model === 'POINTS' ? (joined.points_balance || 0) : (joined.stamps_balance || 0)}{' '}
                   {program.model === 'POINTS' ? t('points', 'points') : t('stamps', 'stamps')}
                 </strong>
+              </div>
+            )}
+
+            {session?.access_token && (joined?.id || alreadyEnrolled) && (
+              <div style={{ margin: '14px 0 10px', width: '100%' }}>
+                <WalletButtons
+                  membershipId={joined?.id}
+                  businessSlug={program.businesses?.slug}
+                  accessToken={session.access_token}
+                />
               </div>
             )}
 

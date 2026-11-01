@@ -2,12 +2,14 @@ import { createServerClient, createUserClient } from '../supabase.js'
 import { getAccessibleBusinessIds } from '../database.js'
 
 export async function requireAuth(request, response, next) {
+  let accessToken = null
   const authorization = request.get('authorization')
-  if (!authorization?.startsWith('Bearer ')) {
-    return response.status(401).json({ error: 'Authentication required' })
+  if (authorization?.startsWith('Bearer ')) {
+    accessToken = authorization.slice('Bearer '.length).trim()
+  } else if (typeof request.query?.token === 'string' && request.query.token.trim()) {
+    accessToken = request.query.token.trim()
   }
 
-  const accessToken = authorization.slice('Bearer '.length).trim()
   if (!accessToken) return response.status(401).json({ error: 'Authentication required' })
 
   const client = createUserClient(accessToken)

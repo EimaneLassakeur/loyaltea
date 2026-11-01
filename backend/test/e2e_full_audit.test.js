@@ -378,6 +378,39 @@ test('LOYALTEA END-TO-END AUTONOMOUS AUDIT, WORKFLOW & SECURITY TEST SUITE', asy
     assert.equal(reJoin.data.code, 'MEMBERSHIP_EXISTS')
   })
 
+  await t.test('3.4 Customer 1 retrieves Apple Wallet .pkpass and Google Wallet pass object', async () => {
+    // 1. Apple Wallet pass
+    const applePassRes = await makeRequest(app, 'GET', `/api/wallet/apple/${membership1A.id}`, {
+      headers: { Authorization: `Bearer ${customer1Token}` },
+    })
+    assert.equal(applePassRes.status, 200, `Apple pass request failed: ${JSON.stringify(applePassRes.data)}`)
+    assert.equal(applePassRes.headers.get('content-type'), 'application/vnd.apple.pkpass')
+    assert.ok(applePassRes.headers.get('content-disposition')?.includes('.pkpass'))
+
+    // 2. Google Wallet pass
+    const googlePassRes = await makeRequest(app, 'GET', `/api/wallet/google/${membership1A.id}`, {
+      headers: { Authorization: `Bearer ${customer1Token}` },
+    })
+    assert.equal(googlePassRes.status, 200, `Google pass request failed: ${JSON.stringify(googlePassRes.data)}`)
+    assert.equal(googlePassRes.data.ok, true)
+    assert.equal(googlePassRes.data.loyaltyObject?.accountId, membership1A.secure_token)
+    assert.equal(googlePassRes.data.loyaltyObject?.barcode?.value, membership1A.secure_token)
+  })
+
+  await t.test('3.5 Wallet security & IDOR isolation: Customer 2 cannot access Customer 1 wallet pass', async () => {
+    // Customer 2 attempts to fetch Customer 1's Apple pass
+    const appleIdor = await makeRequest(app, 'GET', `/api/wallet/apple/${membership1A.id}`, {
+      headers: { Authorization: `Bearer ${customer2Token}` },
+    })
+    assert.equal(appleIdor.status, 403, 'Customer 2 should be blocked with 403 from fetching Customer 1 Apple pass')
+
+    // Customer 2 attempts to fetch Customer 1's Google pass
+    const googleIdor = await makeRequest(app, 'GET', `/api/wallet/google/${membership1A.id}`, {
+      headers: { Authorization: `Bearer ${customer2Token}` },
+    })
+    assert.equal(googleIdor.status, 403, 'Customer 2 should be blocked with 403 from fetching Customer 1 Google pass')
+  })
+
   // -------------------------------------------------------------
   // PHASE 4: Counter Operations, Points Awarding & Reward Redemption
   // -------------------------------------------------------------

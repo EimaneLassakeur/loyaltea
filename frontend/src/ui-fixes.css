@@ -3044,3 +3044,158 @@ html[dir='rtl'] .points-entry-input {
   box-shadow: 0 4px 12px rgba(46, 125, 50, 0.25) !important;
   cursor: pointer;
 }
+
+
+/* ==========================================================================
+   Apple & Google Wallet Integration Badges
+   ========================================================================== */
+
+.wallet-integration-wrap {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.wallet-buttons-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+}
+
+.wallet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.wallet-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.wallet-badge-icon {
+  flex-shrink: 0;
+}
+
+/* Apple Wallet Button - Official styling */
+.apple-wallet-btn {
+  background: #000000;
+  color: #ffffff;
+  border-color: #1a1a1a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.apple-wallet-btn:hover:not(:disabled) {
+  background: #1a1a1a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+}
+
+.apple-wallet-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Google Wallet Button - Official styling */
+.google-wallet-btn {
+  background: #ffffff;
+  color: #1f1f1f;
+  border: 1px solid #747775;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.google-wallet-btn:hover:not(:disabled) {
+  background: #f8f9fa;
+  border-color: #5e5e5e;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+}
+
+.google-wallet-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+[data-theme='dark'] .google-wallet-btn {
+  background: #1f1f1f;
+  color: #e3e3e3;
+  border-color: #444746;
+}
+
+[data-theme='dark'] .google-wallet-btn:hover:not(:disabled) {
+  background: #2b2b2b;
+}
+
+.wallet-btn-spin {
+  animation: wallet-spin 1s linear infinite;
+}
+
+@keyframes wallet-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.wallet-btn-success {
+  color: #34a853;
+}
+
+.wallet-feedback-error {
+  color: var(--coral-deep, #c2410c);
+  font-size: 12px;
+  margin-top: 6px;
+  text-align: center;
+}
+
+.wallet-info-modal {
+  max-width: 440px;
+}
+
+.wallet-info-body {
+  padding: 16px 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.wallet-info-meta {
+  margin: 14px 0;
+  padding: 12px;
+  background: var(--paper, #fcfbf9);
+  border: 1px solid var(--line, #ebe7e2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wallet-info-meta code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.wallet-info-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .wallet-buttons-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

@@ -6,6 +6,7 @@ import { createAdminAuthClient, createAuthClient, createPublicClient, createUser
 import { archiveBusiness, createBusinessProvisioning, createEmployee, createSubscriptionPlan, createWorkspace, deleteOrArchiveBusiness, deleteSubscriptionPlan, earnLoyalty, finishBusinessProvisioning, getAccessibleBusinessIds, getBusinessPerformance, getBusinessStats, getPendingBusinessSubscription, getPlatformOverview, getSubscriptionPlans, pool, redeemReward, updateBusinessLifecycle, updateSubscriptionPlan } from '../database.js'
 import { expireSubscriptions, getBusinessSubscription, recordCashPaymentAndRenew, requireActiveBusinessSubscription, subscriptionAllowsAccess } from '../subscription.js'
 import { normalizeEmail, normalizePhone } from '../authUtils.js'
+import { getMembershipWalletData, generateApplePassBuffer, generateGoogleWalletPass } from '../wallet/walletService.js'
 
 const router = Router()
 const staffRoles = ['BUSINESS_OWNER', 'MANAGER', 'EMPLOYEE', 'PLATFORM_ADMIN']
@@ -391,6 +392,62 @@ router.get('/customer/memberships', async (request, response, next) => {
 
     return response.json({ memberships: data || [], transactions })
   } catch (error) {
+    return next(error)
+  }
+})
+
+router.get('/wallet/apple/:membershipId', requireRoles(...allRoles), async (request, response, next) => {
+  try {
+    const { membershipId } = request.params
+    const passData = await getMembershipWalletData(
+      membershipId,
+      request.user.id,
+      request.profile?.role,
+      request.businessIds || []
+    )
+    if (!passData) {
+      return response.status(404).json({ error: 'Membership not found' })
+    }
+
+    const { buffer, filename } = generateApplePassBuffer(passData)
+    response.setHeader('Content-Type', 'application/vnd.apple.pkpass')
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    response.setHeader('Content-Length', buffer.length)
+    return response.send(buffer)
+  } catch (error) {
+    if (error.statusCode === 403) {
+      return response.status(403).json({ error: error.message })
+    }
+    return next(error)
+  }
+})
+
+router.get('/wallet/google/:membershipId', requireRoles(...allRoles), async (request, response, next) => {
+  try {
+    const { membershipId } = request.params
+    const passData = await getMembershipWalletData(
+      membershipId,
+      request.user.id,
+      request.profile?.role,
+      request.businessIds || []
+    )
+    if (!passData) {
+      return response.status(404).json({ error: 'Membership not found' })
+    }
+
+    const googlePass = generateGoogleWalletPass(passData)
+    return response.json({
+      ok: true,
+      saveUrl: googlePass.saveUrl,
+      jwt: googlePass.jwt,
+      loyaltyObject: googlePass.loyaltyObject,
+      loyaltyClass: googlePass.loyaltyClass,
+      configured: googlePass.configured,
+    })
+  } catch (error) {
+    if (error.statusCode === 403) {
+      return response.status(403).json({ error: error.message })
+    }
     return next(error)
   }
 })

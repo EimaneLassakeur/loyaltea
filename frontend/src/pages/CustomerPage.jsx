@@ -19,6 +19,7 @@ import { apiFetch } from '../lib/api'
 import PreferencesControls from '../components/PreferencesControls'
 import { usePreferences } from '../contexts/usePreferences'
 import ActivityLogSection from '../components/common/ActivityLogSection'
+import WalletButtons from '../components/wallet/WalletButtons'
 
 const BRAND_PALETTES = [
   { gradient: 'linear-gradient(135deg, #1d3832 0%, #295147 100%)', badge: '#438a72', border: '#295147' },
@@ -542,6 +543,13 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                       <span>{t('showMembershipToken', 'Show Membership Token')}</span>
                     </button>
                   </div>
+
+                  {/* Mobile Wallet Integration (Apple & Google Wallet) */}
+                  <WalletButtons
+                    membershipId={membership.id}
+                    businessSlug={program.businesses?.slug}
+                    accessToken={session.access_token}
+                  />
                 </div>
               </article>
             )
@@ -664,6 +672,14 @@ export default function CustomerPage({ session, profile, onSignOut }) {
             <p className="heading-copy modal-instruction">
               {t('fullscreenQrInstruction', 'Hold this QR code up to the counter scanner to record your visit.')}
             </p>
+
+            <div style={{ width: '100%', margin: '14px 0 8px' }}>
+              <WalletButtons
+                membershipId={selectedMembership.id}
+                businessSlug={selectedMembership.loyalty_programs?.businesses?.slug}
+                accessToken={session.access_token}
+              />
+            </div>
 
             <button
               type="button"

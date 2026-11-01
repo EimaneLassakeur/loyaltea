@@ -46,6 +46,13 @@ export const config = {
   databaseSsl: databaseUrl && databaseCa ? buildDatabaseSsl(databaseUrl, databaseCa) : null,
   nodeEnv: process.env.NODE_ENV || 'development',
   publicSignupEnabled: process.env.PUBLIC_SIGNUP_ENABLED !== 'false',
+  applePassTypeIdentifier: process.env.APPLE_PASS_TYPE_ID || 'pass.loyaltea.app',
+  appleTeamIdentifier: process.env.APPLE_TEAM_ID || 'LOYALTEA01',
+  applePassCert: process.env.APPLE_PASS_CERT || null,
+  applePassKey: process.env.APPLE_PASS_KEY || null,
+  googleWalletIssuerId: process.env.GOOGLE_WALLET_ISSUER_ID || '33880000000223344',
+  googleWalletClientEmail: process.env.GOOGLE_WALLET_CLIENT_EMAIL || null,
+  googleWalletPrivateKey: process.env.GOOGLE_WALLET_PRIVATE_KEY ? process.env.GOOGLE_WALLET_PRIVATE_KEY.split('\\n').join('\n') : null,
 }
 
 export function assertConfig() {
