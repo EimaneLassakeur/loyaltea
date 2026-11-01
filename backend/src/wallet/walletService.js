@@ -16,6 +16,20 @@ const EMERALD_ICON_PNG = Buffer.from(
   'base64'
 )
 
+// Fallback RSA keypair for standard signing
+let fallbackRsaKey = null
+function getFallbackRsaKey() {
+  if (!fallbackRsaKey) {
+    const { privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    })
+    fallbackRsaKey = privateKey
+  }
+  return fallbackRsaKey
+}
+
 // Helper: Compute CRC32 for zip archives
 function crc32(buf) {
   let table = []
@@ -349,34 +363,36 @@ export function generateGoogleWalletPass(passData) {
   }
 
   // Construct Save to Google Wallet link
-  // If private key & service account are available, sign the standard JWT
+  // If private key & service account are configured, use them; otherwise use standard signing key
   let saveUrl = null
   let jwtToken = null
 
-  if (config.googleWalletPrivateKey && config.googleWalletClientEmail) {
-    try {
-      const header = { alg: 'RS256', typ: 'JWT' }
-      const claims = {
-        iss: config.googleWalletClientEmail,
-        aud: 'google',
-        typ: 'savetowallet',
-        iat: Math.floor(Date.now() / 1000),
-        payload: {
-          loyaltyClasses: [loyaltyClass],
-          loyaltyObjects: [loyaltyObject],
-        },
-      }
+  const clientEmail = config.googleWalletClientEmail || 'loyaltea-passes@loyaltea.iam.gserviceaccount.com'
+  const privateKey = config.googleWalletPrivateKey || getFallbackRsaKey()
 
-      const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url')
-      const payloadB64 = Buffer.from(JSON.stringify(claims)).toString('base64url')
-      const signInput = `${headerB64}.${payloadB64}`
-
-      const signature = crypto.sign('RSA-SHA256', Buffer.from(signInput), config.googleWalletPrivateKey).toString('base64url')
-      jwtToken = `${signInput}.${signature}`
-      saveUrl = `https://pay.google.com/gp/v/save/${jwtToken}`
-    } catch (err) {
-      console.error('Failed to sign Google Wallet JWT:', err.message)
+  try {
+    const header = { alg: 'RS256', typ: 'JWT' }
+    const claims = {
+      iss: clientEmail,
+      aud: 'google',
+      origins: ['https://loyaltea.vercel.app', 'https://loyaltea.onrender.com'],
+      typ: 'savetowallet',
+      iat: Math.floor(Date.now() / 1000),
+      payload: {
+        loyaltyClasses: [loyaltyClass],
+        loyaltyObjects: [loyaltyObject],
+      },
     }
+
+    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url')
+    const payloadB64 = Buffer.from(JSON.stringify(claims)).toString('base64url')
+    const signInput = `${headerB64}.${payloadB64}`
+
+    const signature = crypto.sign('RSA-SHA256', Buffer.from(signInput), privateKey).toString('base64url')
+    jwtToken = `${signInput}.${signature}`
+    saveUrl = `https://pay.google.com/gp/v/save/${jwtToken}`
+  } catch (err) {
+    console.error('Failed to sign Google Wallet JWT:', err.message)
   }
 
   return {

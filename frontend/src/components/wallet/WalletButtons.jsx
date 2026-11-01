@@ -41,7 +41,7 @@ function GoogleWalletIcon() {
 
 export default function WalletButtons({
   membershipId,
-  businessSlug = 'loyaltea',
+  _businessSlug = 'loyaltea',
   accessToken,
   compact = false,
   className = '',
@@ -50,59 +50,27 @@ export default function WalletButtons({
   const [downloadingApple, setDownloadingApple] = useState(false)
   const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [appleSuccess, setAppleSuccess] = useState(false)
-  const [googleModalInfo, setGoogleModalInfo] = useState(null)
   const [errorNotice, setErrorNotice] = useState('')
 
-  const handleAppleWallet = async () => {
+  const handleAppleWallet = () => {
     if (!membershipId || !accessToken || downloadingApple) return
     setErrorNotice('')
     setDownloadingApple(true)
 
     try {
-      const endpoint = buildApiUrl(`/api/wallet/apple/${membershipId}`)
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-
-      if (!response.ok) {
-        let errMsg = t('walletDownloadFailed', 'Failed to download wallet pass.')
-        try {
-          const errorData = await response.json()
-          if (errorData.error) errMsg = errorData.error
-        } catch {
-          // Response is not json
-        }
-        throw new Error(errMsg)
-      }
-
-      const contentType = response.headers.get('content-type') || ''
-      if (!contentType.includes('pkpass') && !contentType.includes('octet-stream') && !contentType.includes('zip')) {
-        const text = await response.text()
-        throw new Error(`Unexpected server response: ${text.slice(0, 80)}`)
-      }
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `${businessSlug || 'loyaltea'}-loyalty-card.pkpass`
-      document.body.appendChild(anchor)
-      anchor.click()
-      document.body.removeChild(anchor)
-
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url)
-      }, 2000)
+      // Direct navigation to pass endpoint with token query parameter.
+      // On iOS Safari, this immediately slides up the native Apple Wallet "Add Pass" sheet.
+      // On desktop / non-iOS, it triggers native file download of the .pkpass bundle.
+      const passUrl = buildApiUrl(`/api/wallet/apple/${membershipId}?token=${encodeURIComponent(accessToken)}`)
+      window.location.assign(passUrl)
 
       setAppleSuccess(true)
-      setTimeout(() => setAppleSuccess(false), 3500)
+      setTimeout(() => setAppleSuccess(false), 3000)
     } catch (err) {
       console.error('Apple Wallet download error:', err)
       setErrorNotice(err.message || t('walletDownloadFailed', 'Failed to download wallet pass.'))
     } finally {
-      setDownloadingApple(false)
+      setTimeout(() => setDownloadingApple(false), 1200)
     }
   }
 
@@ -113,15 +81,17 @@ export default function WalletButtons({
 
     try {
       const data = await apiFetch(`/api/wallet/google/${membershipId}`, accessToken)
-      if (data.saveUrl) {
-        window.open(data.saveUrl, '_blank')
+      if (data?.saveUrl) {
+        // Direct navigation to Google Wallet:
+        // On Android, this directly opens the native Google Wallet app with the Loyalty Card.
+        // On desktop/iOS, it opens Google Wallet web to save to the user's Google Account.
+        window.location.assign(data.saveUrl)
       } else {
-        // Pass model generated in dev mode / review mode
-        setGoogleModalInfo(data)
+        throw new Error('Google Wallet pass link could not be generated.')
       }
     } catch (err) {
       console.error('Google Wallet error:', err)
-      setErrorNotice(err.message || 'Failed to process Google Wallet card')
+      setErrorNotice(err.message || 'Failed to open Google Wallet')
     } finally {
       setLoadingGoogle(false)
     }
@@ -178,57 +148,6 @@ export default function WalletButtons({
       </div>
 
       {errorNotice && <p className="wallet-feedback-error">{errorNotice}</p>}
-
-      {/* Development / Information Modal for Google Wallet Object */}
-      {googleModalInfo && (
-        <div className="qr-modal-backdrop" role="presentation" onClick={() => setGoogleModalInfo(null)}>
-          <div
-            className="qr-modal wallet-info-modal"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <GoogleWalletIcon />
-                <h3>Google Wallet Pass Ready</h3>
-              </div>
-            </div>
-            <div className="wallet-info-body">
-              <p>
-                Your loyalty card object has been generated for Google Wallet.
-              </p>
-              <div className="wallet-info-meta">
-                <div>
-                  <strong>Card Account ID:</strong>
-                  <code>{googleModalInfo.loyaltyObject?.accountId}</code>
-                </div>
-                <div>
-                  <strong>Balance:</strong>
-                  <span>{googleModalInfo.loyaltyObject?.loyaltyPoints?.balance?.string} {googleModalInfo.loyaltyObject?.loyaltyPoints?.label}</span>
-                </div>
-                <div>
-                  <strong>Status:</strong>
-                  <span className="badge badge-success">ACTIVE</span>
-                </div>
-              </div>
-              <p className="wallet-info-note">
-                When Google Wallet issuer credentials are configured in your environment, clicking this button immediately adds the pass to Google Wallet on your Android device.
-              </p>
-            </div>
-            <div className="modal-form-actions">
-              <button
-                type="button"
-                className="primary-button"
-                style={{ width: '100%' }}
-                onClick={() => setGoogleModalInfo(null)}
-              >
-                {t('close', 'Close')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
