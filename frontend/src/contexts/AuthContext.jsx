@@ -9,10 +9,16 @@ import {
 import { AuthContext } from './authContextValue'
 
 function readInitialSession() {
-  const params = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '')
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
+  const params = new URLSearchParams(hash)
   const accessToken = params.get('access_token')
+  const type = params.get('type')
+  if (type === 'recovery') {
+    sessionStorage.setItem('loyaltea.recovery_mode', 'true')
+  }
   if (window.location.pathname === '/auth/callback' && params.get('error')) {
     clearStoredSession()
+    sessionStorage.removeItem('loyaltea.recovery_mode')
     return null
   }
   if (!accessToken) return getStoredSession()
@@ -39,6 +45,11 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(() => Boolean(readInitialSession()))
   const [error, setError] = useState(readInitialAuthError)
+  const [isRecoveryMode, setIsRecoveryMode] = useState(() => {
+    const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
+    const params = new URLSearchParams(hash)
+    return params.get('type') === 'recovery' || sessionStorage.getItem('loyaltea.recovery_mode') === 'true'
+  })
   const isMountedRef = useRef(true)
 
   useEffect(() => {
@@ -231,6 +242,36 @@ export function AuthProvider({ children }) {
     }
   }
 
+  const updatePassword = async (newPassword) => {
+    setError('')
+    try {
+      const currentSession = getStoredSession() || session
+      if (!currentSession?.access_token) {
+        throw new Error('Your reset session has expired. Please request a new password reset link.')
+      }
+      const result = await apiFetch('/api/auth/update-password', currentSession.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ password: newPassword }),
+      })
+      sessionStorage.removeItem('loyaltea.recovery_mode')
+      setIsRecoveryMode(false)
+      return { data: result }
+    } catch (err) {
+      const msg = err.message || 'Could not update password'
+      setError(msg)
+      return { error: err }
+    }
+  }
+
+  const cancelRecovery = () => {
+    sessionStorage.removeItem('loyaltea.recovery_mode')
+    setIsRecoveryMode(false)
+    clearStoredSession()
+    setSession(null)
+    setProfile(null)
+    setError('')
+  }
+
   const signOut = async () => {
     try {
       if (session?.access_token) {
@@ -239,6 +280,8 @@ export function AuthProvider({ children }) {
         })
       }
     } finally {
+      sessionStorage.removeItem('loyaltea.recovery_mode')
+      setIsRecoveryMode(false)
       clearStoredSession()
       setSession(null)
       setProfile(null)
@@ -249,7 +292,7 @@ export function AuthProvider({ children }) {
   const clearError = () => setError('')
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, error, signIn, signUp, signOut, clearError }}>
+    <AuthContext.Provider value={{ session, profile, loading, error, signIn, signUp, signOut, clearError, isRecoveryMode, updatePassword, cancelRecovery }}>
       {children}
     </AuthContext.Provider>
   )

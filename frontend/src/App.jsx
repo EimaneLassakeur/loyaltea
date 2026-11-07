@@ -2,6 +2,7 @@ import './App.css'
 import { useAuth } from './contexts/useAuth'
 import { usePreferences } from './contexts/usePreferences'
 import AuthScreen from './components/auth/AuthScreen'
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen'
 import JoinScreen from './components/join/JoinScreen'
 import PlatformAdminScreen from './components/auth/PlatformAdminScreen'
 import PendingSubscriptionScreen from './components/auth/PendingSubscriptionScreen'
@@ -9,11 +10,14 @@ import DashboardPage from './pages/DashboardPage'
 import CustomerPage from './pages/CustomerPage'
 
 export default function App() {
-  const { session, profile, loading, error, signIn, signUp, signOut, clearError } = useAuth()
+  const { session, profile, loading, error, signIn, signUp, signOut, clearError, isRecoveryMode, updatePassword, cancelRecovery } = useAuth()
   const { t } = usePreferences()
   const businessJoinMatch = window.location.pathname.match(/^\/join\/business\/([^/]+)\/?$/)
   const legacyProgramJoinMatch = window.location.pathname.match(/^\/join\/(?!business(?:\/|$))([^/]+)\/?$/)
 
+  if (isRecoveryMode && session) {
+    return <ResetPasswordScreen onUpdatePassword={updatePassword} onCancel={cancelRecovery} />
+  }
   if (loading) return <div className="app-state"><strong>{t('loadingWorkspace')}</strong></div>
   if (businessJoinMatch) return <JoinScreen businessSlug={businessJoinMatch[1]} session={session} profile={profile} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />
   if (legacyProgramJoinMatch) return <JoinScreen programId={legacyProgramJoinMatch[1]} session={session} profile={profile} onSignIn={signIn} onSignUp={signUp} onClearError={clearError} />

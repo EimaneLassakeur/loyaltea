@@ -53,7 +53,10 @@ export default function AuthScreen({ onSignIn, onSignUp, onClearError, error }) 
       try {
         await apiFetch('/api/auth/forgot-password', null, {
           method: 'POST',
-          body: JSON.stringify({ email: normEmail }),
+          body: JSON.stringify({
+            email: normEmail,
+            origin: window.location.origin,
+          }),
         })
         setForgotSuccess(true)
         setMessage(t('resetLinkSent', 'If an account exists with this email, a password reset link has been sent.'))

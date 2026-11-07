@@ -34,8 +34,8 @@ const databaseCa = readCertificate()
 
 export const config = {
   port: Number(process.env.PORT || 3000),
-  frontendOrigin: process.env.FRONTEND_ORIGIN || '',
-  authRedirectUrl: process.env.AUTH_REDIRECT_URL || '',
+  frontendOrigin: process.env.FRONTEND_ORIGIN || (process.env.NODE_ENV === 'production' ? 'https://loyaltea.vercel.app' : 'http://localhost:5173'),
+  authRedirectUrl: process.env.AUTH_REDIRECT_URL || (process.env.NODE_ENV === 'production' ? 'https://loyaltea.vercel.app/auth/callback' : 'http://localhost:5173/auth/callback'),
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,

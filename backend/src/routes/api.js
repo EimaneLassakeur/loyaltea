@@ -82,14 +82,38 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
 
 router.post('/auth/forgot-password', authLimiter, async (request, response, next) => {
   try {
-    const { email } = request.body || {}
+    const { email, origin } = request.body || {}
     const normalizedEmail = normalizeEmail(email)
     if (!normalizedEmail) {
       return response.status(400).json({ error: 'A valid email address is required' })
     }
 
+    // Determine the authoritative redirect target:
+    // 1. If client sent its browser origin (e.g. https://loyaltea.vercel.app), use it
+    // 2. Otherwise fall back to config.authRedirectUrl or production frontend URL
+    let targetOrigin = 'https://loyaltea.vercel.app'
+    if (origin && typeof origin === 'string') {
+      try {
+        const parsed = new URL(origin)
+        if (parsed.protocol === 'https:' || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+          targetOrigin = parsed.origin
+        }
+      } catch {
+        // Stick to default origin
+      }
+    } else if (config.authRedirectUrl) {
+      targetOrigin = config.authRedirectUrl.replace(/\/auth\/callback\/?$/, '')
+    } else if (config.frontendOrigin) {
+      targetOrigin = config.frontendOrigin
+    }
+
+    // Safeguard: Never send a localhost redirect URL to external users in production
+    if (config.nodeEnv === 'production' && targetOrigin.includes('localhost')) {
+      targetOrigin = 'https://loyaltea.vercel.app'
+    }
+
     const authClient = createAuthClient()
-    const redirectTo = config.authRedirectUrl || (config.frontendOrigin ? `${config.frontendOrigin}/auth/callback` : 'https://loyaltea.vercel.app/auth/callback')
+    const redirectTo = `${targetOrigin}/auth/callback`
 
     const { error } = await authClient.auth.resetPasswordForEmail(normalizedEmail, {
       redirectTo,
@@ -102,6 +126,29 @@ router.post('/auth/forgot-password', authLimiter, async (request, response, next
     return response.json({
       ok: true,
       message: 'If an account exists with this email, password reset instructions have been sent.',
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.post('/auth/update-password', authLimiter, requireAuth, async (request, response, next) => {
+  try {
+    const { password } = request.body || {}
+    if (typeof password !== 'string' || password.length < 8) {
+      return response.status(400).json({ error: 'Password must be at least 8 characters long' })
+    }
+
+    const userClient = createUserClient(request.accessToken)
+    const { data, error } = await userClient.auth.updateUser({ password })
+    if (error) {
+      return response.status(400).json({ error: error.message })
+    }
+
+    return response.json({
+      ok: true,
+      message: 'Password updated successfully',
+      user: data.user,
     })
   } catch (error) {
     return next(error)
