@@ -254,9 +254,27 @@ html[dir='rtl'] .topbar-actions {
     width: 248px;
     flex: 0 0 248px;
     min-width: 248px;
-    position: static;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     transform: none !important;
     box-shadow: none !important;
+    box-sizing: border-box;
+  }
+  .sidebar .main-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .sidebar .sidebar-bottom {
+    margin-top: auto;
+    flex-shrink: 0;
   }
   .main-content {
     flex: 1 1 0%;
@@ -301,10 +319,28 @@ html[dir='rtl'] .topbar-actions {
     width: 210px;
     flex: 0 0 210px;
     min-width: 210px;
-    position: static;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     transform: none !important;
     box-shadow: none !important;
     padding: 24px 14px 18px;
+    box-sizing: border-box;
+  }
+  .sidebar .main-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .sidebar .sidebar-bottom {
+    margin-top: auto;
+    flex-shrink: 0;
   }
   .main-content {
     flex: 1 1 0%;
@@ -2364,10 +2400,32 @@ html[dir='rtl'] .detail-value {
   padding: 16px 20px 20px;
   box-sizing: border-box;
 }
+/* Activity Log Section & Scroll Isolation */
+.content-grid {
+  align-items: start !important;
+}
+
 .activity-entries-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 480px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-end: 4px;
+}
+.activity-entries-list::-webkit-scrollbar {
+  width: 5px;
+}
+.activity-entries-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.activity-entries-list::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+.activity-entries-list::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 .activity-entry-row {
   display: flex;
@@ -2526,90 +2584,311 @@ html[dir='rtl'] .detail-value {
   font-size: 13px;
 }
 
-/* Customer Loyalty Card Enhanced */
+/* Minimalist, Brand-Consistent Customer Loyalty Card */
+.membership-card.customer-card-minimal,
 .customer-card-enhanced {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--white) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  color: var(--ink) !important;
   overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
+
+.membership-card.customer-card-minimal::after {
+  display: none !important;
+}
+
+.membership-card.customer-card-minimal:hover,
+.customer-card-enhanced:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  border-color: rgba(38, 67, 61, 0.25);
+}
+
+html[data-theme='dark'] .membership-card.customer-card-minimal,
+html[data-theme='dark'] .customer-card-enhanced {
+  background: var(--white);
+  border-color: var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .membership-card.customer-card-minimal:hover,
+html[data-theme='dark'] .customer-card-enhanced:hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  border-color: rgba(159, 207, 191, 0.3);
+}
+
 .card-brand-stripe {
-  height: 6px;
-  width: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
+  display: none;
 }
+
 .membership-card-inner {
-  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
 }
+
 .membership-brand-title-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
+
 .membership-business-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   object-fit: cover;
   border: 1px solid var(--line);
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
+
+.membership-business-logo-fallback {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: rgba(38, 67, 61, 0.08);
+  color: #26433d;
+  border: 1px solid rgba(38, 67, 61, 0.15);
+  flex-shrink: 0;
+}
+
+html[data-theme='dark'] .membership-business-logo-fallback {
+  background: rgba(159, 207, 191, 0.12);
+  color: #9fcfbf;
+  border-color: rgba(159, 207, 191, 0.25);
+}
+
 .membership-business-title {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 17px;
+  font-weight: 700;
   color: var(--ink);
   line-height: 1.25;
   margin: 0;
 }
+
 .membership-program-subtitle {
   font-size: 12px;
   color: var(--muted);
   margin: 2px 0 0;
 }
+
+.membership-model-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  background: rgba(38, 67, 61, 0.08);
+  color: #26433d;
+  border: 1px solid rgba(38, 67, 61, 0.2);
+}
+
+html[data-theme='dark'] .membership-model-badge {
+  background: rgba(159, 207, 191, 0.12);
+  color: #9fcfbf;
+  border-color: rgba(159, 207, 191, 0.25);
+}
+
+.membership-hero-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.membership-balance-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.membership-balance-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.membership-balance strong {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.membership-balance span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-inline-start: 6px;
+}
+
+.membership-milestone-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.unlocked-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #2e7d32;
+  font-weight: 700;
+}
+
+html[data-theme='dark'] .unlocked-hint {
+  color: #9fcfbf;
+}
+
+.membership-qr-touch-target {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.membership-qr-plate {
+  padding: 8px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  display: grid;
+  place-items: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.membership-qr-touch-target:hover .membership-qr-plate {
+  transform: scale(1.04);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.qr-touch-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.membership-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.membership-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.membership-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #26433d, #438a72);
+  transition: width 0.3s ease;
+}
+
+html[data-theme='dark'] .membership-progress span {
+  background: linear-gradient(90deg, #3d7062, #9fcfbf);
+}
+
 .customer-offer-card {
   padding: 12px 14px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.025);
+  border-radius: 12px;
+  background: var(--paper);
   border: 1px solid var(--line);
-  margin-top: 14px;
+  margin-top: 4px;
   box-sizing: border-box;
 }
+
+html[data-theme='dark'] .customer-offer-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line);
+}
+
 .customer-offer-card.is-unlocked {
   background: rgba(46, 125, 50, 0.08);
-  border-color: rgba(46, 125, 50, 0.3);
+  border-color: #438a72;
 }
+
+html[data-theme='dark'] .customer-offer-card.is-unlocked {
+  background: rgba(46, 125, 50, 0.16);
+  border-color: #9fcfbf;
+}
+
 .offer-card-top {
   display: flex;
   align-items: flex-start;
   gap: 10px;
 }
+
 .offer-card-icon {
   color: var(--coral-deep, #e05a47);
   flex-shrink: 0;
   margin-top: 1px;
 }
+
 .customer-offer-card.is-unlocked .offer-card-icon {
   color: #2e7d32;
 }
+
+html[data-theme='dark'] .customer-offer-card.is-unlocked .offer-card-icon {
+  color: #9fcfbf;
+}
+
 .offer-card-text {
   flex: 1 1 auto;
 }
+
 .offer-card-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--ink);
   display: block;
 }
+
 .offer-card-desc {
   font-size: 12px;
   color: var(--muted);
   margin: 2px 0 0;
   line-height: 1.4;
 }
+
 .offer-card-footer {
   display: flex;
   align-items: center;
@@ -2618,13 +2897,15 @@ html[dir='rtl'] .detail-value {
   gap: 8px;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--line);
 }
+
 .offer-req-badge {
   font-size: 11px;
   font-weight: 700;
   color: var(--ink);
 }
+
 .offer-expiry-badge,
 .offer-no-expiry-badge {
   font-size: 11px;
@@ -2632,16 +2913,19 @@ html[dir='rtl'] .detail-value {
   display: inline-flex;
   align-items: center;
 }
+
 .offer-expiry-badge.expired {
   color: var(--coral-deep);
   font-weight: 600;
 }
+
 .customer-card-actions-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 8px;
 }
+
 .customer-card-actions-row .card-qr-btn,
 .customer-card-actions-row .card-token-btn {
   min-height: 44px;
@@ -2653,6 +2937,66 @@ html[dir='rtl'] .detail-value {
   gap: 8px;
   padding: 0 12px;
   box-sizing: border-box;
+}
+
+/* Password Toggle & Forgot Password in Auth Form */
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-input-wrap input {
+  padding-inline-end: 42px !important;
+  width: 100%;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  inset-inline-end: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.password-toggle-btn:hover {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme='dark'] .password-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.auth-password-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.forgot-password-trigger {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--coral-deep);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.forgot-password-trigger:hover {
+  text-decoration: underline;
 }
 
 /* Membership Token Dialog & Fullscreen Modal */

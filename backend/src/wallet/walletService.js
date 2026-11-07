@@ -307,7 +307,7 @@ export function generateGoogleWalletPass(passData) {
     id: classId,
     issuerName: passData.business_name || 'Loyaltea Business',
     programName: passData.program_name || 'Loyalty Program',
-    reviewStatus: 'UNDER_REVIEW',
+    reviewStatus: config.googleWalletReviewStatus || 'UNDER_REVIEW',
     hexBackgroundColor: '#26433d',
     programLogo: {
       sourceUri: {

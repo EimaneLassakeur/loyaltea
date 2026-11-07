@@ -80,6 +80,34 @@ router.post('/auth/login', authLimiter, async (request, response, next) => {
   }
 })
 
+router.post('/auth/forgot-password', authLimiter, async (request, response, next) => {
+  try {
+    const { email } = request.body || {}
+    const normalizedEmail = normalizeEmail(email)
+    if (!normalizedEmail) {
+      return response.status(400).json({ error: 'A valid email address is required' })
+    }
+
+    const authClient = createAuthClient()
+    const redirectTo = config.authRedirectUrl || (config.frontendOrigin ? `${config.frontendOrigin}/auth/callback` : 'https://loyaltea.vercel.app/auth/callback')
+
+    const { error } = await authClient.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo,
+    })
+
+    if (error) {
+      console.warn('Password reset request error:', error.message)
+    }
+
+    return response.json({
+      ok: true,
+      message: 'If an account exists with this email, password reset instructions have been sent.',
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 router.post('/auth/signup', authLimiter, async (request, response, next) => {
   try {
     if (!config.publicSignupEnabled) return response.status(403).json({ error: 'Public signup is currently disabled' })

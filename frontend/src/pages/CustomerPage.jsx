@@ -21,27 +21,6 @@ import { usePreferences } from '../contexts/usePreferences'
 import ActivityLogSection from '../components/common/ActivityLogSection'
 import WalletButtons from '../components/wallet/WalletButtons'
 
-const BRAND_PALETTES = [
-  { gradient: 'linear-gradient(135deg, #1d3832 0%, #295147 100%)', badge: '#438a72', border: '#295147' },
-  { gradient: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)', badge: '#3b82f6', border: '#2563eb' },
-  { gradient: 'linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%)', badge: '#8b5cf6', border: '#6d28d9' },
-  { gradient: 'linear-gradient(135deg, #7c2d12 0%, #c2410c 100%)', badge: '#ea580c', border: '#c2410c' },
-  { gradient: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)', badge: '#14b8a6', border: '#0d9488' },
-  { gradient: 'linear-gradient(135deg, #831843 0%, #db2777 100%)', badge: '#ec4899', border: '#db2777' },
-  { gradient: 'linear-gradient(135deg, #374151 0%, #4b5563 100%)', badge: '#6b7280', border: '#4b5563' },
-  { gradient: 'linear-gradient(135deg, #3f2c20 0%, #78350f 100%)', badge: '#d97706', border: '#78350f' },
-]
-
-function getBusinessTheme(str) {
-  let hash = 0
-  const text = String(str || 'loyaltea')
-  for (let i = 0; i < text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const idx = Math.abs(hash) % BRAND_PALETTES.length
-  return BRAND_PALETTES[idx]
-}
-
 export default function CustomerPage({ session, profile, onSignOut }) {
   const { t } = usePreferences()
   const [memberships, setMemberships] = useState([])
@@ -378,8 +357,6 @@ export default function CustomerPage({ session, profile, onSignOut }) {
             const balance = isPoints ? membership.points_balance || 0 : membership.stamps_balance || 0
             const unit = isPoints ? t('points', 'points') : t('stamps', 'stamps')
 
-            const theme = getBusinessTheme(businessName)
-
             // Find the active offer
             const allRewards = (program.rewards || []).filter((r) => !r.deleted_at)
             const activeOffer = allRewards.find((r) => r.is_active)
@@ -393,29 +370,32 @@ export default function CustomerPage({ session, profile, onSignOut }) {
             const isUnlocked = activeOffer && balance >= targetThreshold && !isOfferExpired
 
             return (
-              <article className="membership-card customer-card-enhanced" key={membership.id}>
-                {/* Visual Business Brand Header Ribbon */}
-                <div className="card-brand-stripe" style={{ background: theme.gradient }} />
-
+              <article className="membership-card customer-card-minimal" key={membership.id}>
                 <div className="membership-card-inner">
-                  {/* Header: Prominent Business Name & Loyalty Model Badge */}
+                  {/* Header: Clean Business Identity & Loyalty Model Badge */}
                   <div className="membership-card-header">
                     <div className="membership-brand-info">
                       <div className="membership-brand-title-wrap">
-                        {program.businesses?.logo_url && (
+                        {program.businesses?.logo_url ? (
                           <img
                             src={program.businesses.logo_url}
                             alt=""
                             className="membership-business-logo"
                             loading="lazy"
                           />
+                        ) : (
+                          <div className="membership-business-logo-fallback" aria-hidden="true">
+                            <Coffee size={18} />
+                          </div>
                         )}
-                        <h2 className="membership-business-title">{businessName}</h2>
+                        <div>
+                          <h2 className="membership-business-title">{businessName}</h2>
+                          <p className="membership-program-subtitle">{program.name || t('loyaltyProgram', 'Loyalty Program')}</p>
+                        </div>
                       </div>
-                      <p className="membership-program-subtitle">{program.name || t('loyaltyProgram', 'Loyalty Program')}</p>
                     </div>
                     <div className="membership-meta-badges">
-                      <span className="membership-model-badge" style={{ borderColor: theme.badge, color: theme.badge }}>
+                      <span className="membership-model-badge">
                         {isPoints ? t('pointsModel', 'Points') : t('stampsModel', 'Stamps')}
                       </span>
                     </div>
@@ -424,6 +404,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                   {/* Hero Balance & Touch QR Target */}
                   <div className="membership-hero-row">
                     <div className="membership-balance-section">
+                      <span className="membership-balance-label">{t('currentBalance', 'Current Balance')}</span>
                       <div className="membership-balance">
                         <strong>{balance}</strong>
                         <span>{unit}</span>
@@ -454,7 +435,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                       <div className="membership-qr-plate">
                         <QRCodeSVG
                           value={membership.secure_token}
-                          size={76}
+                          size={72}
                           level="M"
                           includeMargin={false}
                           bgColor="#ffffff"
@@ -465,7 +446,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                     </button>
                   </div>
 
-                  {/* Mathematical Progress Bar */}
+                  {/* Minimalist Progress Bar */}
                   <div className="membership-progress-section">
                     <div className="progress-labels">
                       <span className="progress-current">
@@ -480,7 +461,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                       aria-valuemin={0}
                       aria-valuemax={100}
                     >
-                      <span style={{ width: `${progressPercent}%`, background: theme.badge }} />
+                      <span style={{ width: `${progressPercent}%` }} />
                     </div>
                   </div>
 
@@ -489,7 +470,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                     <div className={`customer-offer-card ${isUnlocked ? 'is-unlocked' : ''}`}>
                       <div className="offer-card-top">
                         <div className="offer-card-icon">
-                          {isUnlocked ? <CheckCircle2 size={18} /> : <Gift size={18} />}
+                          {isUnlocked ? <CheckCircle2 size={16} /> : <Gift size={16} />}
                         </div>
                         <div className="offer-card-text">
                           <strong className="offer-card-name">{activeOffer.name}</strong>
@@ -504,14 +485,14 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                         </span>
                         {activeOffer.expires_at ? (
                           <span className={`offer-expiry-badge ${isOfferExpired ? 'expired' : ''}`}>
-                            <Calendar size={12} style={{ marginRight: '4px', verticalAlign: '-1px' }} />
+                            <Calendar size={12} style={{ marginInlineEnd: '4px' }} />
                             {isOfferExpired
                               ? t('offerExpired', 'Expired')
                               : `${t('expiresAt', 'Expires')}: ${new Date(activeOffer.expires_at).toLocaleDateString()}`}
                           </span>
                         ) : (
                           <span className="offer-no-expiry-badge">
-                            <Clock size={12} style={{ marginRight: '4px', verticalAlign: '-1px' }} />
+                            <Clock size={12} style={{ marginInlineEnd: '4px' }} />
                             {t('noExpirationDate', 'No expiration date')}
                           </span>
                         )}
@@ -519,7 +500,7 @@ export default function CustomerPage({ session, profile, onSignOut }) {
                     </div>
                   ) : (
                     <div className="customer-offer-card is-pending">
-                      <Gift size={16} />
+                      <Gift size={15} />
                       <span>{t('noActiveOfferNotice', 'No current active offer configured for this business yet.')}</span>
                     </div>
                   )}

@@ -53,6 +53,7 @@ export const config = {
   googleWalletIssuerId: process.env.GOOGLE_WALLET_ISSUER_ID || '33880000000223344',
   googleWalletClientEmail: process.env.GOOGLE_WALLET_CLIENT_EMAIL || null,
   googleWalletPrivateKey: process.env.GOOGLE_WALLET_PRIVATE_KEY ? process.env.GOOGLE_WALLET_PRIVATE_KEY.split('\\n').join('\n') : null,
+  googleWalletReviewStatus: process.env.GOOGLE_WALLET_REVIEW_STATUS || 'UNDER_REVIEW',
 }
 
 export function assertConfig() {
