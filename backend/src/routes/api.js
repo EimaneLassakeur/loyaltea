@@ -139,8 +139,8 @@ router.post('/auth/update-password', authLimiter, requireAuth, async (request, r
       return response.status(400).json({ error: 'Password must be at least 8 characters long' })
     }
 
-    const userClient = createUserClient(request.accessToken)
-    const { data, error } = await userClient.auth.updateUser({ password })
+    const adminClient = createAdminAuthClient()
+    const { data, error } = await adminClient.auth.admin.updateUserById(request.user.id, { password })
     if (error) {
       return response.status(400).json({ error: error.message })
     }

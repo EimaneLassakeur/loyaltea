@@ -901,7 +901,9 @@ test('Vercel SPA rewrite configuration and production join routing validation', 
   const path = await import('node:path')
 
   // 1. Verify frontend/vercel.json exists and contains standard SPA fallback rewrite
-  const vercelJsonPath = path.resolve(process.cwd(), '../frontend/vercel.json')
+  const vercelJsonPath = fs.existsSync(path.resolve(process.cwd(), 'frontend/vercel.json'))
+    ? path.resolve(process.cwd(), 'frontend/vercel.json')
+    : path.resolve(process.cwd(), '../frontend/vercel.json')
   assert.ok(fs.existsSync(vercelJsonPath), 'frontend/vercel.json must exist to fix Vercel 404 on deep links')
   const vercelConfig = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf8'))
   assert.ok(Array.isArray(vercelConfig.rewrites), 'rewrites array must be defined in vercel.json')
